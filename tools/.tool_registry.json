@@ -1,0 +1,38 @@
+{
+    "change_model.py": {
+        "hash": "2fa4daf6b9e7e4ad7c067d46e9d48cb2866fbee758df3cca3ca905de3b80869d",
+        "status": "verified",
+        "last_tested": "1789436014.1412537"
+    },
+    "create_and_run_greeting.py": {
+        "hash": "c4170678689a2b800e55b15c6b3304f4e9e40d5df7a3ef05c886dad4ef9f0b08",
+        "status": "verified",
+        "last_tested": "1789436014.1412537"
+    },
+    "create_desktop_folder.py": {
+        "hash": "885d2d2648ca0ed7058a793cc5fcba8cabcd2b936a03da0f05b92038e8050dc3",
+        "status": "verified",
+        "last_tested": "1789436014.1422546"
+    },
+    "play_youtube_song.py": {
+        "hash": "812706f609e35b0c2d6035ba1b8d1a24ca56d0a49b9ed3f38279a845c290fe94",
+        "status": "verified",
+        "author": "eris",
+        "last_tested": "1790196336.3388793"
+    },
+    "scrape_website.py": {
+        "hash": "581fd3bbb3dd7c73f4e1f148ab51f72dd9f1494d447518f4ac59483766755e85",
+        "status": "verified",
+        "last_tested": "1789436014.1432648"
+    },
+    "send_email.py": {
+        "hash": "d789aaddf4978827cd1460575749144ccff5e5197f96da5b72fb756bc6c728b0",
+        "status": "verified",
+        "last_tested": "1789766693.369971"
+    },
+    "open_browser.py": {
+        "hash": "987542d61a71b4916962586b8e131f7ed7d4715c54e86f0e0fc9c90ef4316bcb",
+        "status": "verified",
+        "last_tested": "1789766700"
+    }
+}

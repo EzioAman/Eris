@@ -1,0 +1,38 @@
+.pixel-swap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  isolation: isolate;
+  outline: none;
+}
+
+.pixel-swap__layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.pixel-swap__layer[data-visible='false'] {
+  visibility: hidden;
+}
+
+.pixel-swap__grid {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.pixel-swap__pixel {
+  position: absolute;
+  overflow: hidden;
+  opacity: 0;
+  contain: paint;
+  background-color: #ffffff;
+  box-shadow: 0 0 2px rgba(255, 255, 255, 0.9);
+}
+
+.pixel-swap__pixel-content {
+  position: absolute;
+}

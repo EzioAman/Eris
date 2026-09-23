@@ -1,0 +1,93 @@
+<svg id="writer" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Eris Writer agent - Thinking" data-state="thinking">
+    <defs>
+      <linearGradient id="wGold" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#fff8e8"></stop><stop offset=".45" stop-color="#e8d9bd"></stop><stop offset="1" stop-color="#a48d69"></stop>
+      </linearGradient>
+      <radialGradient id="wCore" cx="256" cy="256" r="120" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#fffaf0"></stop><stop offset=".35" stop-color="#ffe9c2" stop-opacity=".7"></stop><stop offset="1" stop-color="#ffd9a0" stop-opacity="0"></stop>
+      </radialGradient>
+      <linearGradient id="wTail" gradientUnits="userSpaceOnUse" x1="256" y1="51" x2="138" y2="88">
+        <stop offset="0" stop-color="#fff1d0" stop-opacity=".95"></stop><stop offset="1" stop-color="#fff1d0" stop-opacity="0"></stop>
+      </linearGradient>
+      <filter id="wGlow" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur stdDeviation="5" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+      </filter>
+    </defs>
+
+    <style>
+      #writer { --spring: cubic-bezier(.34,1.56,.64,1); transition: filter .6s ease, opacity .6s ease; }
+      @supports (animation-timing-function: linear(0,1)) {
+        #writer { --spring: linear(0,.173,.539,.903,1.151,1.25,1.229,1.144,1.048,.975,.94,.938,.957,.982,1.002,1.014,1.016,1.0125,1.006,1.001,1); }
+      }
+      #writer .ring, #writer .orbit, #writer .core, #writer .burst { transform-box: view-box; transform-origin: 256px 256px; }
+      #writer .feather { transform-box: view-box; transform-origin: 258px 414px; }
+      #writer .fx { transform-box: fill-box; transform-origin: center; }
+      #writer .spark { animation: twinkle 3s ease-in-out infinite; }
+      #writer .tip, #writer .burst { opacity: 0; }
+      #writer .trail { opacity: 1; transition: opacity .5s; }
+      #writer .ink { stroke-dasharray: 100; stroke-dashoffset: 0; opacity: .45; }
+
+      /* THINKING */
+      #writer[data-state="thinking"] .ring    { animation: spin 30s linear infinite reverse; }
+      #writer[data-state="thinking"] .orbit   { animation: spin 5s linear infinite; }
+      #writer[data-state="thinking"] .trail   { opacity: 1; }
+      #writer[data-state="thinking"] .core    { animation: pulse 1.8s ease-in-out infinite; }
+      #writer[data-state="thinking"] .feather { animation: ponder 3.6s infinite; }
+      #writer[data-state="thinking"] .dot     { animation: blink 1.2s ease-in-out infinite; }
+      #writer[data-state="thinking"] .spark   { animation-duration: 1.2s; }
+
+      @keyframes spin { to { rotate: 360deg; } }
+      @keyframes twinkle { 0%,100%{opacity:.2;scale:.6} 50%{opacity:1;scale:1.4} }
+      @keyframes blink { 0%,100%{opacity:.35;scale:.8} 30%{opacity:1;scale:1.25} 60%{opacity:.5;scale:.9} }
+      @keyframes pulse { 0%,100%{scale:.8;opacity:.45} 50%{scale:1.3;opacity:1} }
+      @keyframes ponder {
+        0%{rotate:0deg;translate:0 0;animation-timing-function:var(--spring)}
+        33%{rotate:-9deg;translate:-6px -12px;animation-timing-function:var(--spring)}
+        66%{rotate:6deg;translate:5px -5px;animation-timing-function:var(--spring)}
+        100%{rotate:0deg;translate:0 0}
+      }
+      @media (prefers-reduced-motion: reduce) { #writer * { animation: none !important; } }
+    </style>
+
+    <circle class="ring" cx="256" cy="256" r="205" fill="none" stroke="#e6d5b3" stroke-opacity=".28" stroke-width="1.2" stroke-dasharray="2 8"></circle>
+
+    <!-- orbit: all three sparks have matching trailing comet effects -->
+    <g class="orbit">
+      <g>
+        <path class="trail" d="M138.4 88.1 A205 205 0 0 1 256 51" fill="none" stroke="url(#wTail)" stroke-width="4" stroke-linecap="round"></path>
+        <circle class="spark fx" cx="256" cy="51" r="6" fill="#fff4dc" filter="url(#wGlow)"></circle>
+      </g>
+      <g transform="rotate(120 256 256)">
+        <path class="trail" d="M138.4 88.1 A205 205 0 0 1 256 51" fill="none" stroke="url(#wTail)" stroke-width="3.5" stroke-linecap="round"></path>
+        <circle class="spark fx" cx="256" cy="51" r="4.5" fill="#e8d9bd" style="animation-delay:1s"></circle>
+      </g>
+      <g transform="rotate(240 256 256)">
+        <path class="trail" d="M138.4 88.1 A205 205 0 0 1 256 51" fill="none" stroke="url(#wTail)" stroke-width="3.8" stroke-linecap="round"></path>
+        <circle class="spark fx" cx="256" cy="51" r="5" fill="#fff4dc" style="animation-delay:2s"></circle>
+      </g>
+    </g>
+
+    <circle class="burst" cx="256" cy="256" r="50" fill="none" stroke="#ffe9c2" stroke-width="3"></circle>
+    <circle class="core" cx="256" cy="256" r="120" fill="url(#wCore)"></circle>
+
+    <path class="ink" pathLength="100" d="M150 414 q14 -10 28 0 t28 0 t28 0 t28 0 t28 0 t28 0 t28 0" fill="none" stroke="#e8d9bd" stroke-width="2.5" stroke-linecap="round"></path>
+
+    <g class="feather" filter="url(#wGlow)">
+      <path d="M258 345 C226 316 208 270 224 226 C240 182 288 146 350 116 C350 172 330 232 294 274 C274 298 262 318 258 345 Z" fill="url(#wGold)"></path>
+      <path d="M258 350 C264 290 290 200 350 116" fill="none" stroke="#fff8e8" stroke-width="4" stroke-linecap="round"></path>
+      <g fill="none" stroke="#b9a98f" stroke-width="2.5" stroke-linecap="round" opacity=".7">
+        <path d="M266 300 Q244 288 230 262"></path><path d="M284 242 Q262 226 250 204"></path><path d="M311 180 Q296 166 288 152"></path>
+        <path d="M266 300 Q278 296 290 284"></path><path d="M284 242 Q306 236 322 216"></path>
+      </g>
+      <path d="M258 345 L246 394 L258 414 L270 394 Z" fill="#fff4dc"></path>
+      <path d="M258 350 L258 408" stroke="#9f8965" stroke-width="2"></path>
+      <circle class="tip fx" cx="258" cy="414" r="5" fill="#fff4dc"></circle>
+    </g>
+
+    <g fill="#f6ead2" filter="url(#wGlow)">
+      <circle class="dot fx" cx="256" cy="82" r="5" style="animation-delay:0s"></circle>
+      <circle class="dot fx" cx="256" cy="108" r="3" style="animation-delay:.15s"></circle>
+      <circle class="dot fx" cx="256" cy="436" r="3" style="animation-delay:.3s"></circle>
+      <circle class="dot fx" cx="256" cy="458" r="5" style="animation-delay:.45s"></circle>
+    </g>
+  </svg>

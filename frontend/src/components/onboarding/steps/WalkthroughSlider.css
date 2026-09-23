@@ -1,0 +1,338 @@
+/* =====================================================================
+   Jebbles Onboarding Walkthrough Slider Styles (Adapted for ERIS)
+   Based on CodePen: https://codepen.io/jebbles/pen/MKoYya
+   ===================================================================== */
+
+.eris-walkthrough-card {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  height: 520px;
+  background: linear-gradient(145deg, rgba(18, 24, 38, 0.95), rgba(11, 14, 23, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(59, 130, 246, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+  backdrop-filter: blur(20px);
+  transition: opacity 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* 1. Top Pagination Dots */
+.eris-walkthrough-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 24px;
+  padding-bottom: 8px;
+  gap: 8px;
+  z-index: 20;
+}
+
+.eris-walkthrough-pagination .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transform: scale(0.75);
+  transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), background 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.eris-walkthrough-pagination .dot:hover {
+  background: rgba(255, 255, 255, 0.5);
+  transform: scale(0.9);
+}
+
+.eris-walkthrough-pagination .dot.active {
+  background: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.7);
+  transform: scale(1.15);
+}
+
+/* 2. Walkthrough Body */
+.eris-walkthrough-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* Navigation Arrow Buttons */
+.eris-walkthrough-body .nav-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%) scale(1);
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  padding: 12px;
+  font-size: 20px;
+  outline: none;
+  z-index: 30;
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), color 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.3s ease;
+}
+
+.eris-walkthrough-body .nav-arrow:hover:not(:disabled) {
+  color: #38bdf8;
+  transform: translateY(-50%) scale(1.2);
+}
+
+.eris-walkthrough-body .nav-arrow:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.eris-walkthrough-body .nav-arrow.prev {
+  left: 6px;
+}
+
+.eris-walkthrough-body .nav-arrow.next {
+  right: 6px;
+}
+
+/* Screens Wrapper */
+.eris-walkthrough-screens {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eris-walkthrough-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 32px 20px 32px;
+  text-align: center;
+  opacity: 0;
+  transform: translateX(60px);
+  pointer-events: none;
+  transition: transform 0.45s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.45s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.eris-walkthrough-screen.active {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.eris-walkthrough-screen.prev {
+  opacity: 0;
+  transform: translateX(-60px);
+}
+
+/* 3. Media Circle with Layered Animations */
+.eris-media-circle {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, rgba(15, 23, 42, 0.4) 80%);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  box-shadow: inset 0 0 20px rgba(56, 189, 248, 0.1);
+  transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.eris-walkthrough-screen.active .eris-media-circle {
+  animation: erisPulse 4s ease-in-out infinite;
+}
+
+@keyframes erisPulse {
+  0%, 100% { transform: scale(1); box-shadow: inset 0 0 20px rgba(56, 189, 248, 0.1); }
+  50% { transform: scale(1.03); box-shadow: inset 0 0 30px rgba(56, 189, 248, 0.2), 0 0 20px rgba(56, 189, 248, 0.15); }
+}
+
+/* Layered Icons */
+.eris-media-circle .icon-layer-back {
+  position: absolute;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition-delay: 0.1s;
+}
+
+.eris-media-circle .icon-layer-main {
+  position: relative;
+  z-index: 2;
+  opacity: 0;
+  transform: translateY(-20px) scale(0.8);
+  transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition-delay: 0.25s;
+}
+
+.eris-media-circle .icon-layer-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 3;
+  opacity: 0;
+  transform: scale(0);
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition-delay: 0.4s;
+}
+
+.eris-walkthrough-screen.active .icon-layer-back {
+  opacity: 0.25;
+  transform: scale(1.35);
+}
+
+.eris-walkthrough-screen.active .icon-layer-main {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.eris-walkthrough-screen.active .icon-layer-badge {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Text Content */
+.eris-walkthrough-screen h3 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #ffffff;
+  margin: 0 0 10px 0;
+  line-height: 1.35;
+}
+
+.eris-walkthrough-screen p {
+  font-size: 13px;
+  font-weight: 300;
+  line-height: 1.6;
+  color: rgba(226, 232, 240, 0.75);
+  margin: 0;
+  max-width: 270px;
+}
+
+/* 4. Footer & Actions */
+.eris-walkthrough-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 16px 24px 20px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(11, 14, 23, 0.6);
+  min-height: 72px;
+}
+
+.eris-walkthrough-btn-next {
+  width: 100%;
+  height: 44px;
+  border-radius: 12px;
+  background: #38bdf8;
+  color: #0b0f17;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.eris-walkthrough-btn-next:hover {
+  background: #7dd3fc;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Finish Action Bar (Slides up smoothly on last screen) */
+.eris-walkthrough-finish-bar {
+  position: absolute;
+  inset: 0;
+  padding: 14px 20px;
+  display: flex;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.95);
+  border-top: 1px solid rgba(56, 189, 248, 0.2);
+  opacity: 0;
+  transform: translateY(100%);
+  pointer-events: none;
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.eris-walkthrough-finish-bar.active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.eris-btn-action-signup {
+  flex: 1;
+  height: 44px;
+  border-radius: 12px;
+  background: #38bdf8;
+  color: #0b0f17;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.eris-btn-action-signup:hover {
+  background: #7dd3fc;
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+}
+
+.eris-btn-action-signin {
+  flex: 1;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.eris-btn-action-signin:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Skip link */
+.eris-walkthrough-skip {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  z-index: 40;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 0.2s, background 0.2s;
+}
+
+.eris-walkthrough-skip:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}

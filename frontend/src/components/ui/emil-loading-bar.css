@@ -1,0 +1,213 @@
+:root {
+  interpolate-size: allow-keywords;
+}
+
+.emil-loader-wrapper {
+  --color-active: #2a8cff;
+  --color-done: #13db87;
+  --color-fail: #f43f5e;
+
+  /* Layout */
+  --loader-h: 6px;
+  --ball-size: 28px;
+  --radius: 3px;
+
+  /* Derived shades via perceptual oklch mixing */
+  --active-light: color-mix(in oklch, var(--color-active) 50%, #fff);
+  --active-soft: color-mix(in oklch, var(--color-active) 65%, #fff);
+  --active-deep: color-mix(in oklch, var(--color-active) 70%, #000);
+  --active-faded: color-mix(in oklch, var(--color-active) 20%, #000);
+  --active-glow: color-mix(in oklch, var(--color-active) 40%, transparent);
+
+  --done-light: color-mix(in oklch, var(--color-done) 70%, #fff);
+  --done-glow: color-mix(in oklch, var(--color-done) 50%, transparent);
+
+  --fail-light: color-mix(in oklch, var(--color-fail) 50%, #fff);
+  --fail-soft: color-mix(in oklch, var(--color-fail) 65%, #fff);
+  --fail-glow: color-mix(in oklch, var(--color-fail) 40%, transparent);
+
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.emil-loader-wrapper.failed {
+  --color-active: var(--color-fail);
+  --active-light: var(--fail-light);
+  --active-soft: var(--fail-soft);
+  --active-glow: var(--fail-glow);
+}
+
+.emil-loader {
+  width: 100%;
+  height: var(--loader-h);
+  background: #090d16;
+  border-radius: var(--radius);
+  position: relative;
+  overflow: visible;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.emil-progress {
+  position: relative;
+  height: 100%;
+  width: 0%;
+  border-radius: var(--radius);
+  color: var(--color-active);
+  background: linear-gradient(270deg, currentColor, transparent);
+  filter: drop-shadow(0px 0px 10px currentColor);
+}
+
+.emil-progress.done {
+  background: linear-gradient(
+    90deg,
+    var(--color-done),
+    var(--done-light) 40%,
+    var(--color-done) 100%
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  filter: drop-shadow(0px 0px 10px var(--color-done));
+  animation: emilSweepDone 1s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+.emil-done-flash {
+  position: absolute;
+  inset: -8px 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 35%,
+    var(--active-light) 45%,
+    var(--active-light) 55%,
+    transparent 65%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-position: -100% 0;
+  opacity: 0;
+  z-index: 5;
+  pointer-events: none;
+  filter: blur(4px);
+}
+
+.emil-progress.done ~ .emil-done-flash {
+  animation: emilFlashSweep 0.7s 0.05s cubic-bezier(0.12, 0, 0.39, 0) forwards;
+}
+
+.emil-loader::after {
+  content: "";
+  position: absolute;
+  inset: -30px -20px;
+  border-radius: 50px;
+  background: radial-gradient(
+    ellipse at center,
+    var(--done-glow),
+    transparent 70%
+  );
+  opacity: 0;
+  z-index: -1;
+  pointer-events: none;
+  filter: blur(20px);
+}
+
+.emil-loader.bloom::after {
+  animation: emilBloomGlow 1.2s 0.1s ease-out forwards;
+}
+
+.emil-energy {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  height: var(--loader-h);
+  pointer-events: none;
+  transform: translateY(-50%);
+  z-index: 2;
+  transition: opacity 0.2s ease;
+}
+
+.emil-energy .core {
+  position: absolute;
+  right: calc(var(--ball-size) / -2);
+  top: 50%;
+  width: var(--ball-size);
+  height: var(--ball-size);
+  background: var(--active-light);
+  border-radius: 50%;
+  filter: blur(2px);
+  box-shadow: 0 0 12px var(--active-soft), 0 0 32px var(--color-active),
+    0 0 64px var(--active-deep);
+  will-change: width, height, border-radius, background, box-shadow, filter;
+  transform: translateY(-50%) translateZ(0);
+}
+
+.emil-energy .glare {
+  position: absolute;
+  right: -80px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 160px;
+  height: 60px;
+  background: radial-gradient(
+    circle at 50% 0%,
+    color-mix(in oklch, var(--active-light) 90%, transparent),
+    var(--active-glow),
+    transparent 70%
+  );
+  filter: blur(25px) saturate(200%);
+  opacity: 0.85;
+  will-change: transform;
+}
+
+.emil-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+@keyframes emilSweepDone {
+  0% {
+    background-position: 100% 0;
+    filter: drop-shadow(0px 0px 10px var(--color-done));
+  }
+  40% {
+    filter: drop-shadow(0px 0px 50px var(--done-light))
+      drop-shadow(0px 0px 20px var(--color-active));
+  }
+  70% {
+    filter: drop-shadow(0px 0px 35px var(--color-done));
+  }
+  100% {
+    background-position: 0% 0;
+    filter: drop-shadow(0px 0px 14px var(--color-done));
+  }
+}
+
+@keyframes emilFlashSweep {
+  0% {
+    opacity: 1;
+    background-position: -100% 0;
+  }
+  100% {
+    opacity: 0;
+    background-position: 200% 0;
+  }
+}
+
+@keyframes emilBloomGlow {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  25% {
+    opacity: 0.9;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}

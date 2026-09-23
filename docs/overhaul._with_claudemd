@@ -1,0 +1,638 @@
+# Comprehensive ERIS Workspace Overhaul
+
+Full system redesign: state machine, component refactor, workflow builder, AI slop removal, and .exe readiness.
+
+---
+
+## Navigation State Machine Flowchart
+
+Every arrow below is a **legal transition**. If there's no arrow, the user **cannot** go there.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Intro : App launches
+
+    Intro --> Onboarding : User clicks "Get Started" (no account)
+    Intro --> Greeting : User has saved session (auto-login)
+
+    Onboarding --> Intro : User clicks "Back"
+    Onboarding --> Greeting : Signup/Login succeeds (API verified)
+
+    Greeting --> Workspace : User clicks "Enter Workspace" (preflight done)
+    Greeting --> Intro : User clicks "Sign Out"
+
+    Workspace --> Intro : User clicks "Sign Out" (clears session)
+
+    note right of Workspace
+        DEAD END for "Back" button.
+        There is NO path from Workspace back to Greeting.
+        Back button is disabled here (stack is empty).
+        The ONLY exit from Workspace is "Sign Out".
+    end note
+
+    note right of Greeting
+        ONE-TIME GATE.
+        Once user enters Workspace, Greeting
+        is removed from the history stack.
+        It cannot be revisited via "back".
+    end note
+
+    note right of Intro
+        RESET POINT.
+        Sign Out from anywhere lands here.
+        Session storage is cleared.
+        Fresh start.
+    end note
+```
+
+### Guardrail Rules (Enforced in Code)
+
+| From | To | Allowed? | How |
+|------|-----|----------|-----|
+| Workspace | Greeting | **NO** | Stack is cleared when entering workspace |
+| Workspace | Onboarding | **NO** | Not in stack |
+| Workspace | Intro | **Only via Sign Out** | Sign Out handler clears session + navigates |
+| Greeting | Workspace | **Yes** | "Enter Workspace" button |
+| Greeting | Intro | **Only via Sign Out** | Sign Out handler |
+| Greeting | Onboarding | **NO** | Not in stack |
+| Onboarding | Intro | **Yes** | Back button |
+| Onboarding | Greeting | **Yes** | After successful auth API call |
+| Intro | Onboarding | **Yes** | "Get Started" button |
+| Intro | Greeting | **Yes** | Auto-login (valid saved session) |
+| Any | Any via browser URL | **NO** | No URL-based routing. Pure state. |
+
+### What Happens When User Presses "Back"
+
+| Current Screen | Back Goes To | Why |
+|---|---|---|
+| Intro | Nothing (disabled) | This is the root. Can't go further back. |
+| Onboarding | Intro | User went Intro → Onboarding. Logical. |
+| Greeting | Nothing (disabled) | Stack was reset. Greeting is the start after auth. |
+| Workspace | Nothing (disabled) | Stack was cleared on workspace entry. No going back. |
+
+---
+
+## Real Features Audit from `eris_cli.py`
+
+I read every line of [eris_cli.py](file:///e:/All%20Projects%20and%20Editors/ERIS/eris_cli.py). Here's what **actually exists** in the backend vs what the UI currently shows:
+
+### Real Backend Features (must be in menus)
+
+| Feature | CLI Command/Function | Backend API | What UI Should Show |
+|---------|---------------------|-------------|-------------------|
+| **Chat with Eris** | `stream_chat(prompt)` | `/ws` (WebSocket) | Chat input → send to backend → stream response |
+| **Switch Model** | `/config`, `/model <name>` | Not yet API'd | Settings → "Model Configuration" → opens model picker |
+| **Search Models** | `search_and_select()` | Not yet API'd | Inside model picker: search bar, filter by capability |
+| **Filter by Capability** | Checkbox filter (Free, Vision, Audio, Reasoning, Coding) | Not yet API'd | Inside model picker: checkbox filters |
+| **Browse by Provider** | Gemini / Nvidia NIM / OpenRouter catalogs | Not yet API'd | Inside model picker: provider tabs |
+| **Execution Mode** | `/mode speed` or `/mode accuracy` | Not yet API'd | Settings → "Execution Mode" toggle (Speed / Accuracy) |
+| **View Tools** | `/tools` | `/api/tools/list` | Sidebar or menu → "Tools" → shows registered tools |
+| **Login via OTP** | `/login <email>` | `/api/auth/request-otp`, `/api/auth/verify-otp` | Already in Onboarding |
+| **Logout** | `/logout` | `/api/auth/logout` | UserMenu → "Sign Out" |
+| **Who Am I** | `/whoami` | `/api/system/session-status` | UserMenu shows email + session info |
+| **Clear History** | `/clear` | Memory clear (local) | Menu → Edit → "Clear Conversation" |
+| **Read File** | `READ_FILE` tool | `/api/workspace/file` | Eris uses this internally during chat |
+| **Write File** | `WRITE_FILE` tool | Not yet API'd | Eris uses internally, shows approval card |
+| **List Directory** | `LIST_DIR` tool | `/api/workspace/tree` | Eris uses internally |
+| **Run Command** | `RUN_COMMAND` tool | Not yet API'd | Eris uses internally, shows approval card |
+| **Call Custom Tool** | `CALL_TOOL <name>` | Not yet API'd | Eris uses internally |
+| **System Health** | Boot sequence checks | `/health` | Greeting page preflight checks |
+| **System State** | `inspect_system_state()` | `/api/system/state` | Dev mode → View System State |
+| **Workspace Tree** | Directory listing | `/api/workspace/tree` | Could show in sidebar |
+| **RAG Engine** | `rag_engine.py` | In-process | Memory/context management |
+
+### What the UI Currently Shows That Is FAKE
+
+| Fake Item | Why It's Fake | Action |
+|-----------|--------------|--------|
+| "Subsystem status telemetry check" output | Hardcoded string, no API call | **Remove** |
+| "Autonomous pipelines created by ERIS" | No backend support for this yet | **Rename to "Workflows"** |
+| "Neural RAG Vault" connector | There's a RAG engine but no toggle API | **Keep as read-only info** |
+| "Database (auth.db)" connector toggle | You can't toggle the DB on/off | **Make info-only, not toggle** |
+| "Sandbox (Win32)" connector toggle | Sandbox is always-on | **Make info-only, not toggle** |
+| Canned chat responses ("ERIS autonomous pipeline processed...") | No backend call happening | **Replace with "Backend not connected" or actual `/ws` call** |
+| INITIAL_TASKS with fake history entries | Hardcoded mock data | **Remove, show empty state** |
+
+---
+
+## Proposed Changes
+
+### Phase 1: State Machine + Keyboard Manager (Foundation)
+
+#### [NEW] [AppStateContext.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/context/AppStateContext.tsx)
+
+This is the brain of all navigation. Here's exactly what it contains:
+
+```typescript
+// Types
+type ScreenName = 'intro' | 'onboarding' | 'greeting' | 'workspace';
+
+interface AppState {
+  screen: ScreenName;
+  meta?: Record<string, any>;  // Extra data (session info, etc.)
+}
+
+interface AppStateContextType {
+  current: AppState;                    // What screen is showing right now
+  canGoBack: boolean;                   // Is the back button enabled?
+  canGoForward: boolean;                // Is the forward button enabled?
+  navigate: (screen: ScreenName, opts?: {
+    meta?: Record<string, any>;
+    clearHistory?: boolean;             // Wipes the back stack (used when entering workspace)
+    replace?: boolean;                  // Replaces current state instead of pushing
+  }) => void;
+  goBack: () => void;                   // Pop back stack, push current to forward
+  goForward: () => void;                // Pop forward stack, push current to back  
+  reload: () => void;                   // Increment a reload counter (triggers re-render, no page reload)
+  reloadKey: number;                    // Components watch this to know when to re-init
+}
+```
+
+**How the stack works step by step:**
+
+1. App starts → Stack: `[]`, Current: `{ screen: 'intro' }`, Forward: `[]`
+2. User clicks "Get Started" → `navigate('onboarding')`
+   - Push `{ screen: 'intro' }` onto back stack
+   - Set current to `{ screen: 'onboarding' }`
+   - Clear forward stack
+   - Stack: `[intro]`, Current: `onboarding`, Forward: `[]`
+3. User clicks "Back" → `goBack()`
+   - Push current `{ screen: 'onboarding' }` onto forward stack
+   - Pop `{ screen: 'intro' }` from back stack → becomes current
+   - Stack: `[]`, Current: `intro`, Forward: `[onboarding]`
+4. User logs in successfully → `navigate('greeting', { meta: { session } })`
+   - Push current onto back stack
+   - Set current to greeting
+   - Clear forward stack
+5. User clicks "Enter Workspace" → `navigate('workspace', { clearHistory: true })`
+   - **Clear the ENTIRE back stack** → `[]`
+   - **Clear the forward stack** → `[]`
+   - Set current to `{ screen: 'workspace' }`
+   - Stack: `[]`, Current: `workspace`, Forward: `[]`
+   - Now `canGoBack = false` and `canGoForward = false`
+6. User presses "Back" from workspace → **Nothing happens** because `canGoBack = false`
+
+**Sign Out handler:** Clears localStorage session, resets stack to empty, navigates to intro with `replace: true`.
+
+---
+
+#### [NEW] [KeyboardShortcutManager.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/context/KeyboardShortcutManager.tsx)
+
+A context provider that:
+1. Attaches one `keydown` listener to `window` on mount
+2. Maintains a `Map<string, () => void>` of shortcut → action
+3. Each shortcut combo is a string like `"ctrl+n"`, `"ctrl+shift+z"`, `"ctrl+["`, `"ctrl+]"`
+4. On `keydown`, builds the combo string from the event, looks it up, calls `e.preventDefault()` + action
+5. Exposes `registerShortcut(combo, action)` and `unregisterShortcut(combo)` for components to use
+6. Also listens for **Mouse Button 4/5** (`mousedown` event, `event.button === 3` and `event.button === 4`)
+   - Default: MB4 = `goBack()`, MB5 = `goForward()`
+   - Stored in localStorage so user can remap later (future keyboard shortcuts settings UI)
+
+**Default shortcuts:**
+
+| Combo | Action | Note |
+|-------|--------|------|
+| `Ctrl+[` | Go Back (state machine) | Replaces Alt+← which conflicts with browser |
+| `Ctrl+]` | Go Forward (state machine) | Replaces Alt+→ |
+| `Ctrl+R` | Reload (state machine, not page) | `e.preventDefault()` to block browser |
+| `Ctrl+N` | New Chat (clear messages) | |
+| `Ctrl+D` | Toggle dark/light mode | |
+| `Ctrl+B` | Toggle right sidebar | |
+| `Ctrl+1` | Focus chat window | |
+| `Ctrl+2` | Open workflow builder | |
+| `Mouse4` | Go Back | Extra mouse button |
+| `Mouse5` | Go Forward | Extra mouse button |
+
+---
+
+#### [MODIFY] [App.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/App.tsx)
+
+**What changes:**
+1. Wrap everything in `<AppStateProvider>` and `<KeyboardShortcutProvider>`
+2. Replace `useState<'intro' | 'onboarding' | 'greeting' | 'workspace'>` → use `useAppState()`
+3. Replace `setActiveScreen('greeting')` → `navigate('greeting', { meta: { session } })`
+4. Replace `setActiveScreen('workspace')` → `navigate('workspace', { clearHistory: true })`
+5. Context menu: `window.history.back()` → `goBack()`, shortcut label `"Ctrl+["` not `"Alt+←"`
+6. Context menu: `window.history.forward()` → `goForward()`, shortcut label `"Ctrl+]"`
+7. Context menu: `window.location.reload()` → `reload()`, shortcut label `"Ctrl+R"`
+8. Context menu: Gray out Back when `!canGoBack`, gray out Forward when `!canGoForward`
+
+---
+
+### Phase 2: Component Decomposition
+
+Break [ChatWorkspace.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/homepage/ChatWorkspace.tsx) (2,277 lines) into these files:
+
+#### [NEW] [chatTypes.ts](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/chatTypes.ts)
+**Contains:** All TypeScript interfaces currently at lines 47-117
+- `ToolKind`, `ToolOutputItem`, `ToolApprovalItem`, `ToolFlowItem`, `ChatTool`
+- `ChatMessage`, `ConnectorItem`, `FlowNode`, `ScheduledTaskItem`
+- `ChatWorkspaceProps`
+
+**Why separate file:** Every other component imports these. Circular imports are avoided.
+
+---
+
+#### [NEW] [WorkspaceHeader.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/WorkspaceHeader.tsx)
+**Contains:** Lines 982-1219 (header + menubar)
+- Logo, title, dev mode badge
+- Dark mode toggle button
+- Settings dropdown (with REAL menu items from `eris_cli.py`, not fake ones)
+- "Manage Agent" button
+- UserMenu
+- Menubar
+
+**Settings dropdown items (REAL, from eris_cli.py):**
+- "Model Configuration" → opens model picker (placeholder, wired later)
+- "Execution Mode: Speed/Accuracy" → toggle between modes
+- "View Registered Tools" → opens tools list
+- "Clear Conversation" → clears chat
+- "System Health" → triggers `/health` API call
+
+---
+
+#### [NEW] [LeftSidebar.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/LeftSidebar.tsx)
+**Contains:** Lines 1224-1385 (left icon rail)
+- Chat nav button (active indicator)
+- Connectors toggle
+- Workflows button
+- Expand/collapse toggle at bottom
+- **REMOVED:** "Subsystem Verification" button (user said: "who needs that many ways to go back?")
+- **REMOVED:** "Operators" button (no backend for this)
+- **REMOVED:** "Guardrails" button (no standalone guardrails view)
+- **REMOVED:** "Typography" button (no design system view)
+
+**What stays:**
+- Chat (active state indicator)
+- Connectors panel toggle
+- Workflows
+- Expand/Collapse toggle
+
+---
+
+#### [NEW] [ChatCanvas.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/ChatCanvas.tsx)
+**Contains:** Lines 1388-1611 (scrollable conversation + empty state)
+- Empty state with quick action pills (CLEANED UP — see AI slop section)
+- Message list rendering
+- Streaming word-blur animation
+- "Jump to latest" floating button
+- **NEW: Smart auto-scroll logic:**
+
+```
+// Pseudocode for auto-scroll
+let isUserScrolledUp = false
+
+onScroll:
+  if (distance from bottom > 80px) → isUserScrolledUp = true
+  if (distance from bottom < 20px) → isUserScrolledUp = false
+
+onNewMessage or onStreamChunk:
+  if (!isUserScrolledUp) → scroll to bottom smoothly
+  if (isUserScrolledUp) → show "Jump to latest" button, do NOT scroll
+
+onClickJumpToLatest:
+  scroll to bottom
+  isUserScrolledUp = false
+```
+
+---
+
+#### [NEW] [ChatInputBar.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/ChatInputBar.tsx)
+**Contains:** Lines 1612-1811 (input area)
+- Textarea with auto-resize
+- Attach button
+- Settings dropdown (CLEANED UP)
+- Globe button
+- Send / Stop button
+
+---
+
+#### [NEW] [RightSidebar.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/RightSidebar.tsx)
+**Contains:** Lines 1814-2048 (right panel)
+- Connectors section (changed to **info-only**, not toggle — you can't toggle a database off)
+- Workflows section with:
+  - Each workflow card shows a **delete button** on hover (small X icon, top-right)
+  - Clicking delete → inline confirmation "Delete this workflow?" with Cancel/Delete buttons
+  - "+ New Workflow" button → opens the Workflow Builder
+- Section title changed from "Autonomous pipelines created by ERIS" → "Workflows"
+
+---
+
+#### [NEW] [FlowCanvasModal.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/FlowCanvasModal.tsx)
+**Contains:** Lines 2052-2271 (modal)
+- Flow step visualization with node status chips
+- "Step Next Node" and "Add Step" buttons
+- Audit timeline
+- **CLEANED:** "ERIS AUTONOMOUS FLOW" badge → just "ERIS" badge
+- **CLEANED:** "Decomposed pipeline with N sequential nodes" → "N steps"
+
+---
+
+#### [NEW] [ChatMessageBubble.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/ChatMessageBubble.tsx)
+**Contains:** Message rendering logic (lines 1492-1573)
+- User message bubble (right-aligned)
+- Assistant message (left-aligned text + tools)
+- Tool rendering: ToolOutputCard, InlineApprovalCard, DecidedStatusPill, InlineFlowCard
+
+---
+
+#### [NEW] [ToolCards.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/ToolCards.tsx)
+**Contains:** Lines 120-489 (all inline card components)
+- `StreamingWords` — blur-in word animator
+- `ToolOutputCard` — collapsible tool output
+- `DecidedStatusPill` — approved/denied pill
+- `InlineApprovalCard` — approval gate with approve/reject
+- `InlineFlowCard` — workflow preview in chat
+
+---
+
+#### [MODIFY] [ChatWorkspace.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/homepage/ChatWorkspace.tsx)
+**After refactor: ~200-250 lines**
+
+Becomes a thin orchestrator that:
+1. Holds all state (messages, tasks, connectors, theme, sidebar states)
+2. Defines all handlers (sendMessage, handleDecision, createFlow, deleteTask, etc.)
+3. Imports and composes: `WorkspaceHeader`, `LeftSidebar`, `ChatCanvas`, `ChatInputBar`, `RightSidebar`, `FlowCanvasModal`
+4. Passes state + handlers down as props (max 1 level deep)
+
+---
+
+### Phase 3: Workflow Builder (The "Banger Feature")
+
+#### [NEW] [WorkflowBuilder.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/WorkflowBuilder.tsx)
+
+A full-screen modal for creating and editing multi-step workflows. Both the **user** and **Eris** can create these.
+
+**How it works:**
+
+1. **User opens it via:** "+ New Workflow" button in right sidebar, or `Ctrl+2`, or Eris creates one during chat
+2. **It shows a form with these fields:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Create Workflow                              [Cancel]  │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  Workflow Name: [________________________________]      │
+│                                                         │
+│  Goal Description (what should this achieve?):          │
+│  [__________________________________________________]  │
+│  [__________________________________________________]  │
+│                                                         │
+│  ─── Steps ───────────────────────────────────────────  │
+│                                                         │
+│  Step 1:                                                │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │ Name: [Scan workspace files___________________]  │  │
+│  │ Instructions: [Read all .py files in tools/ __]  │  │
+│  │ Tool: [dropdown: READ_FILE ▼]                    │  │
+│  │ MCP Server: [dropdown: None / Custom ▼]          │  │
+│  │                                         [Delete] │  │
+│  └───────────────────────────────────────────────────┘  │
+│                         ↓                               │
+│  Step 2:                                                │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │ Name: [Validate AST guardrails________________]  │  │
+│  │ Instructions: [Check each tool for hardcoded_]   │  │
+│  │ Tool: [dropdown: RUN_COMMAND ▼]                  │  │
+│  │ MCP Server: [dropdown: None ▼]                   │  │
+│  │                                         [Delete] │  │
+│  └───────────────────────────────────────────────────┘  │
+│                         ↓                               │
+│  [+ Add Step]                                           │
+│                                                         │
+│  ─── Advanced ────────────────────────────────────────  │
+│  Execution Mode: (○ Speed) (● Accuracy)                 │
+│  Auto-approve safe operations: [toggle off]             │
+│                                                         │
+│                              [Save Draft] [Run Now]     │
+└─────────────────────────────────────────────────────────┘
+```
+
+3. **Each step has:**
+   - `name` (string) — Short label
+   - `instructions` (text) — What Eris should do in this step (free text)
+   - `tool` (dropdown) — Which tool to use: `READ_FILE`, `WRITE_FILE`, `LIST_DIR`, `RUN_COMMAND`, `CALL_TOOL:<name>`, or "Let Eris decide"
+   - `mcpServer` (dropdown) — Which MCP server to use (future, shows "None" for now)
+   - Delete button to remove the step
+   - Drag handle to reorder steps (future, not in v1)
+
+4. **Available tools in dropdown come from:**
+   - Built-in: `READ_FILE`, `WRITE_FILE`, `LIST_DIR`, `RUN_COMMAND`
+   - Dynamic: Fetched from `/api/tools/list` → shows registered tool names
+   - "Let Eris decide" option (Eris picks the tool based on instructions)
+
+5. **When Eris creates a workflow:**
+   - During chat, if Eris recognizes a multi-step task, she can create a workflow
+   - The workflow appears as an inline card in chat (like now, but cleaner)
+   - User can click "Edit Workflow" to open it in the Workflow Builder
+   - User can click "Run" to execute it
+
+6. **Workflow data structure:**
+```typescript
+interface WorkflowStep {
+  id: string;
+  name: string;
+  instructions: string;
+  tool: 'READ_FILE' | 'WRITE_FILE' | 'LIST_DIR' | 'RUN_COMMAND' | 'CALL_TOOL' | 'auto';
+  toolArg?: string;          // Pre-filled argument (e.g., file path)
+  mcpServer?: string;        // MCP server ID (future)
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  result?: string;           // Output after execution
+}
+
+interface Workflow {
+  id: string;
+  name: string;
+  goal: string;
+  steps: WorkflowStep[];
+  executionMode: 'speed' | 'accuracy';
+  autoApprove: boolean;
+  status: 'draft' | 'running' | 'completed' | 'failed';
+  createdBy: 'user' | 'eris';
+  createdAt: string;
+}
+```
+
+---
+
+### Phase 4: AI Slop Removal
+
+Every single change, with exact location:
+
+| # | Current Text | Replacement | File | Line |
+|---|---|---|---|---|
+| 1 | `"Autonomous Flow Generated by ERIS"` | **Delete this line entirely** — the ERIS badge above is enough | `InlineFlowCard` (→ `ToolCards.tsx`) | ~407 |
+| 2 | `"ERIS AUTONOMOUS FLOW"` badge in modal | `"ERIS"` (just the name) | `FlowCanvasModal.tsx` | ~2080 |
+| 3 | `"Decomposed pipeline with N sequential nodes"` | `"N steps"` | `FlowCanvasModal.tsx` | ~2090 |
+| 4 | `"Autonomous System Pipeline"` default title | Use the user's actual prompt text | `createAutonomousFlow` in ChatWorkspace | ~639 |
+| 5 | `"Real-time Autonomous Execution"` schedule | Current timestamp: `"Created just now"` | `createAutonomousFlow` | ~640 |
+| 6 | `"Autonomous pipelines created by ERIS."` | `"Workflows and scheduled tasks."` | `RightSidebar.tsx` | ~1920 |
+| 7 | `"Generate Autonomous Flow"` button | `"Create Workflow"` | Empty state (`ChatCanvas.tsx`) | ~1438 |
+| 8 | `"Create an autonomous workflow to audit AST sandbox guardrails"` | `"Create a workflow to check tool safety"` | Empty state quick action | ~1429 |
+| 9 | `"Subsystem status telemetry check"` fake output | **Remove** — only show output from real API calls | `handleSendMessage` | ~927 |
+| 10 | `"Status: 200 OK\nActive processes: 1\nSandbox AST: compliant"` | **Remove** this fake output | `handleSendMessage` | ~927 |
+| 11 | `"ERIS autonomous pipeline processed the query. Live subsystems are checked and telemetry is active."` | `"I'll look into that for you."` (or actual backend response) | `handleSendMessage` | ~878 |
+| 12 | `"Subsystem Verification"` sidebar button | **Delete entirely** | `LeftSidebar` | ~1348 |
+| 13 | `"Subsystems & Verifications"` in UserMenu | `"System Health"` | `UserMenu.tsx` | ~107 |
+| 14 | `"Operators"` sidebar button | **Delete** — no backend for this | `LeftSidebar` | ~1294 |
+| 15 | `"Guardrails"` sidebar button | **Delete** — no standalone view | `LeftSidebar` | ~1310 |
+| 16 | `"Typography"` sidebar button | **Delete** — no design system view | `LeftSidebar` | ~1327 |
+| 17 | `INITIAL_TASKS` hardcoded mock data | Replace with empty array `[]` | ChatWorkspace | ~499 |
+| 18 | `INITIAL_CONNECTORS` toggle buttons | Change to info-only status indicators (no toggle) | `RightSidebar` | ~492 |
+| 19 | All `text-[10px]` font sizes | Minimum `text-[11px]` | Global sweep | Multiple |
+| 20 | `"N sequential nodes"` in InlineFlowCard | `"N steps"` | `ToolCards.tsx` | ~471 |
+
+---
+
+### Phase 5: Menubar + Context Menu Rewiring
+
+#### [MODIFY] [Menubar.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/navigation/Menubar.tsx)
+
+**New menu structure (mapped to real eris_cli.py features):**
+
+```
+File
+├── New Chat                    Ctrl+N     → clears messages
+├── Open Workflow Builder       Ctrl+2     → opens WorkflowBuilder modal
+├── ─────────────────────
+└── Sign Out                               → sign out handler
+
+Edit
+├── Undo                        Ctrl+Z     → document.execCommand('undo')
+├── Redo                        Ctrl+Shift+Z → document.execCommand('redo')
+├── ─────────────────────
+└── Clear Conversation                     → clears chat messages
+
+View
+├── Toggle Dark Mode            Ctrl+D     → theme toggle
+├── Toggle Sidebar              Ctrl+B     → right sidebar toggle
+├── ─────────────────────
+└── System Health                          → fetch /health, show result
+
+Tools
+├── View Registered Tools                  → fetch /api/tools/list, show in modal
+├── Model Configuration                   → model picker (placeholder for now)
+├── Execution Mode: [Speed]               → toggle speed/accuracy
+├── ─────────────────────
+└── View Workspace Tree                    → fetch /api/workspace/tree, show in modal
+
+Help
+├── ERIS Documentation                     → opens GitHub
+└── About ERIS                             → version info modal
+```
+
+**Removed:**
+- `"Subsystem Health Check"` — moved to View menu as "System Health"
+- `"Open Window"` — meaningless in current context
+- `"Open Workspace..."` — meaningless
+
+---
+
+### Phase 6: Auto-Scroll Fix
+
+#### [IN] [ChatCanvas.tsx](file:///e:/All%20Projects%20and%20Editors/ERIS/frontend/src/components/workspace/ChatCanvas.tsx)
+
+**Exact logic:**
+
+```typescript
+const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
+
+const handleScroll = useCallback(() => {
+  const el = scrollContainerRef.current;
+  if (!el) return;
+  const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  
+  if (distanceToBottom > 80) {
+    // User scrolled up — stop auto-scrolling
+    setIsUserScrolledUp(true);
+  } else if (distanceToBottom < 20) {
+    // User is at bottom — resume auto-scrolling
+    setIsUserScrolledUp(false);
+  }
+}, []);
+
+// Auto-scroll when new messages arrive
+useEffect(() => {
+  if (!isUserScrolledUp && scrollContainerRef.current) {
+    scrollContainerRef.current.scrollTo({
+      top: scrollContainerRef.current.scrollHeight,
+      behavior: 'smooth',
+    });
+  }
+}, [messages, streamingText, isUserScrolledUp]);
+```
+
+The "Jump to latest" button only shows when `isUserScrolledUp === true`.
+
+---
+
+## Execution Order (Step by Step)
+
+These must be done **in this order** because of dependencies:
+
+```
+Step 1: Create chatTypes.ts
+         ↓  (everything imports from here)
+Step 2: Create AppStateContext.tsx
+         ↓  (App.tsx needs this)
+Step 3: Create KeyboardShortcutManager.tsx
+         ↓  (App.tsx needs this)
+Step 4: Modify App.tsx (wire state machine + keyboard manager)
+         ↓  (context menu now works with state machine)
+Step 5: Create ToolCards.tsx (extract StreamingWords, ToolOutputCard, etc.)
+         ↓  (ChatMessageBubble needs these)
+Step 6: Create ChatMessageBubble.tsx
+         ↓  (ChatCanvas needs this)
+Step 7: Create ChatCanvas.tsx (with auto-scroll fix)
+         ↓  (ChatWorkspace needs this)
+Step 8: Create ChatInputBar.tsx
+         ↓  (ChatWorkspace needs this)
+Step 9: Create WorkspaceHeader.tsx
+         ↓  (ChatWorkspace needs this)
+Step 10: Create LeftSidebar.tsx (cleaned, no fake buttons)
+         ↓  (ChatWorkspace needs this)
+Step 11: Create RightSidebar.tsx (with delete workflow, info-only connectors)
+         ↓  (ChatWorkspace needs this)
+Step 12: Create FlowCanvasModal.tsx (cleaned AI slop labels)
+         ↓  (ChatWorkspace needs this)
+Step 13: Create WorkflowBuilder.tsx (the banger feature)
+         ↓  (RightSidebar opens this)
+Step 14: Refactor ChatWorkspace.tsx (thin orchestrator, ~200 lines)
+         ↓  (all pieces assembled)
+Step 15: Modify WorkspaceView.tsx (if needed)
+Step 16: Modify UserMenu.tsx ("Subsystems & Verifications" → "System Health")
+Step 17: Modify Menubar.tsx (new menu structure with real features)
+Step 18: AI slop global sweep (text-[10px], fake strings, etc.)
+Step 19: TypeScript compilation check (npx tsc --noEmit)
+Step 20: Production build check (npx vite build)
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+```bash
+npx tsc --noEmit        # Zero type errors
+npx vite build           # Clean production bundle
+```
+
+### Manual Verification Checklist
+- [ ] Right-click → Back is grayed out in workspace (can't go back)
+- [ ] Right-click → Forward is grayed out (nothing forward)
+- [ ] Right-click → Reload doesn't reload the page, just re-renders
+- [ ] Sign in → Greeting → Enter Workspace → press browser back → **nothing happens**
+- [ ] Sign out → lands on Intro screen, session cleared
+- [ ] `Ctrl+[` / `Ctrl+]` work for back/forward
+- [ ] `Ctrl+R` does not reload the browser page
+- [ ] Mouse button 4/5 work for back/forward
+- [ ] Send messages → scroll up → new message arrives → **does not auto-scroll**
+- [ ] Click "Jump to latest" → scrolls to bottom → resumes auto-scroll
+- [ ] Hover workflow card → delete button appears → click → confirmation → deletes
+- [ ] Click "+ New Workflow" → Workflow Builder opens with empty form
+- [ ] Fill in workflow steps → Save Draft → appears in sidebar
+- [ ] Search entire UI for "Autonomous" — should find zero instances
+- [ ] Search entire UI for "Subsystem Verification" — zero instances
+- [ ] Search for `text-[10px]` in code — zero instances (replaced with 11px+)
+- [ ] All settings menu items correspond to real backend features

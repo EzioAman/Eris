@@ -1,0 +1,107 @@
+<svg id="coder" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Eris Code agent - Success" data-state="success">
+    <defs>
+      <linearGradient id="cGold" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#fff8e8"></stop><stop offset=".5" stop-color="#e8d9bd"></stop><stop offset="1" stop-color="#a48d69"></stop>
+      </linearGradient>
+      <radialGradient id="cCore" cx="256" cy="256" r="120" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#fffaf0"></stop><stop offset=".35" stop-color="#ffe9c2" stop-opacity=".7"></stop><stop offset="1" stop-color="#ffd9a0" stop-opacity="0"></stop>
+      </radialGradient>
+      <linearGradient id="cTail" gradientUnits="userSpaceOnUse" x1="256" y1="51" x2="138" y2="88">
+        <stop offset="0" stop-color="#fff1d0" stop-opacity=".95"></stop><stop offset="1" stop-color="#fff1d0" stop-opacity="0"></stop>
+      </linearGradient>
+      <filter id="cGlow" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur stdDeviation="5" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+      </filter>
+    </defs>
+
+    <style>
+      #coder { --spring: cubic-bezier(.34,1.56,.64,1); transition: filter .6s ease, opacity .6s ease; }
+      @supports (animation-timing-function: linear(0,1)) {
+        #coder { --spring: linear(0,.173,.539,.903,1.151,1.25,1.229,1.144,1.048,.975,.94,.938,.957,.982,1.002,1.014,1.016,1.0125,1.006,1.001,1); }
+      }
+      #coder .ring, #coder .orbit, #coder .core, #coder .burst { transform-box: view-box; transform-origin: 256px 256px; }
+      #coder .emblem { transform-box: view-box; transform-origin: 256px 230px; }
+      #coder .fx { transform-box: fill-box; transform-origin: center; }
+
+      #coder .spark { animation: twinkle 3s ease-in-out infinite; }
+      #coder .burst { opacity: 0; }
+      #coder .trail { opacity: .95; transition: opacity .5s; }
+      #coder .ln, #coder .check { stroke-dasharray: 100; stroke-dashoffset: 0; }
+      #coder .ln { opacity: .5; }
+      #coder .cursor { animation: caret 1.1s steps(1) infinite; }
+
+      /* SUCCESS */
+      #coder[data-state="success"] .bl     { animation: closeL 1.4s var(--spring) both; }
+      #coder[data-state="success"] .br     { animation: closeR 1.4s var(--spring) both; }
+      #coder[data-state="success"] .sl     { animation: closeS 1.4s var(--spring) both; }
+      #coder[data-state="success"] .orbit  { animation: whip 1.6s var(--spring) both; }
+      #coder[data-state="success"] .trail  { opacity: .95; }
+      #coder[data-state="success"] .core   { animation: flash 1.4s ease-out both; }
+      #coder[data-state="success"] .burst  { animation: ring 1.4s ease-out both; }
+      #coder[data-state="success"] .ln     { stroke: #fff4dc; opacity: 1; filter: url(#cGlow); animation: inkIn .6s ease-out both; }
+      #coder[data-state="success"] .ln2    { animation-delay: .15s; }
+      #coder[data-state="success"] .ln3    { animation-delay: .3s; }
+      #coder[data-state="success"] .cursor { animation: none; opacity: 0; }
+      #coder[data-state="success"] .check  { opacity: 1; animation: inkIn .6s ease-out .6s both; }
+
+      @keyframes twinkle { 0%,100%{opacity:.2;scale:.6} 50%{opacity:1;scale:1.4} }
+      @keyframes closeL { 0%{translate:-34px 0;scale:.8} 100%{translate:0 0;scale:1} }
+      @keyframes closeR { 0%{translate:34px 0;scale:.8} 100%{translate:0 0;scale:1} }
+      @keyframes closeS { 0%{rotate:-28deg;scale:.6} 100%{rotate:0deg;scale:1} }
+      @keyframes whip { 0%{rotate:0deg} 100%{rotate:360deg} }
+      @keyframes flash { 0%{scale:.8;opacity:.6} 30%{scale:2.6;opacity:1} 100%{scale:1;opacity:.85} }
+      @keyframes ring { 0%{opacity:.9;scale:.2} 100%{opacity:0;scale:4} }
+      @keyframes inkIn { 0%{stroke-dashoffset:100} 100%{stroke-dashoffset:0} }
+
+      @media (prefers-reduced-motion: reduce) { #coder * { animation: none !important; } }
+    </style>
+
+    <!-- outer dotted ring -->
+    <circle class="ring" cx="256" cy="256" r="205" fill="none" stroke="#e6d5b3" stroke-opacity=".28" stroke-width="1.2" stroke-dasharray="2 8"></circle>
+
+    <!-- orbit with comet trails: 3 comets properly spaced 120 degrees apart -->
+    <g class="orbit">
+      <!-- Comet 1 (top, 12 o'clock) -->
+      <g>
+        <path class="trail" d="M138.4 88.1 A205 205 0 0 1 256 51" fill="none" stroke="url(#cTail)" stroke-width="4" stroke-linecap="round"></path>
+        <circle class="spark fx" cx="256" cy="51" r="6" fill="#fff4dc" filter="url(#cGlow)"></circle>
+      </g>
+      <!-- Comet 2 (120 degrees, 4 o'clock) -->
+      <g transform="rotate(120 256 256)">
+        <path class="trail" d="M138.4 88.1 A205 205 0 0 1 256 51" fill="none" stroke="url(#cTail)" stroke-width="3.5" stroke-linecap="round"></path>
+        <circle class="spark fx" cx="256" cy="51" r="4.5" fill="#e8d9bd" style="animation-delay:1s"></circle>
+      </g>
+      <!-- Comet 3 (240 degrees, 8 o'clock) -->
+      <g transform="rotate(240 256 256)">
+        <path class="trail" d="M138.4 88.1 A205 205 0 0 1 256 51" fill="none" stroke="url(#cTail)" stroke-width="3.8" stroke-linecap="round"></path>
+        <circle class="spark fx" cx="256" cy="51" r="5" fill="#fff4dc" style="animation-delay:2s"></circle>
+      </g>
+    </g>
+
+    <circle class="burst" cx="256" cy="256" r="50" fill="none" stroke="#ffe9c2" stroke-width="3"></circle>
+    <circle class="core" cx="256" cy="256" r="120" fill="url(#cCore)"></circle>
+
+    <!-- emblem: < / > -->
+    <g class="emblem" filter="url(#cGlow)" fill="none" stroke="url(#cGold)" stroke-linecap="round" stroke-linejoin="round">
+      <path class="bl fx" d="M206 170 L146 230 L206 290" stroke-width="14"></path>
+      <path class="br fx" d="M306 170 L366 230 L306 290" stroke-width="14"></path>
+      <path class="sl fx" d="M272 158 L240 302" stroke-width="10"></path>
+    </g>
+
+    <!-- code lines, caret, success check -->
+    <g fill="none" stroke="#e8d9bd" stroke-linecap="round">
+      <path class="ln ln1" pathLength="100" d="M176 336 H286" stroke-width="6"></path>
+      <path class="ln ln2" pathLength="100" d="M200 362 H340" stroke-width="6"></path>
+      <path class="ln ln3" pathLength="100" d="M176 388 H262" stroke-width="6"></path>
+      <path class="check" pathLength="100" d="M292 388 l10 10 l22 -24" stroke="#fff4dc" stroke-width="5" stroke-linejoin="round" filter="url(#cGlow)"></path>
+    </g>
+    <rect class="cursor" x="266" y="378" width="10" height="20" rx="2" fill="#fff4dc" filter="url(#cGlow)"></rect>
+
+    <!-- celestial dots -->
+    <g fill="#f6ead2" filter="url(#cGlow)">
+      <circle class="dot fx" cx="256" cy="82" r="5" style="animation-delay:0s"></circle>
+      <circle class="dot fx" cx="256" cy="108" r="3" style="animation-delay:.15s"></circle>
+      <circle class="dot fx" cx="256" cy="436" r="3" style="animation-delay:.3s"></circle>
+      <circle class="dot fx" cx="256" cy="458" r="5" style="animation-delay:.45s"></circle>
+    </g>
+  </svg>
