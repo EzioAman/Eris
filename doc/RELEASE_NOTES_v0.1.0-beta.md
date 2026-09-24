@@ -62,6 +62,7 @@ ERIS v0.1.0-beta introduces the desktop installer release for the ERIS AI Worksp
 ---
 
 ## Checksums & Assets
-| File | Type | Description |
+| File | Size | SHA-256 Checksum |
 | :--- | :--- | :--- |
-| `ERIS Setup 0.1.0-beta.exe` | Windows Installer | Complete Windows x64 setup executable |
+| `ERIS Setup 0.1.0-beta.exe` | ~212.8 MB | `b8b70348c113c62b2fe53283d60a860b1b42d88aa8dc482014f0d98f8d0b8421` |
+
