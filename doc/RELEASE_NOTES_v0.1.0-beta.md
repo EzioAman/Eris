@@ -12,12 +12,14 @@ ERIS v0.1.0-beta introduces the desktop installer release for the ERIS AI Worksp
 - Built-in Windows NSIS installer with customizable install directory and Desktop/Start Menu shortcuts.
 
 ### 2. Multi-Provider Model Matrix
-- Support for leading LLM providers:
+- Support for leading LLM providers and OpenAI-compatible routers:
+  - **OpenAI** (GPT-4o, GPT-4o-mini, o1, o3-mini via `openai/`)
+  - **Custom OpenAI-Compatible Routers** (vLLM, LM Studio, LocalAI, or custom `/v1` proxies)
   - **Google Gemini** (Gemini 2.5 Flash, 2.5 Pro)
-  - **Groq** (Llama 3.3 70B, Mixtral)
+  - **Groq** (Llama 3.3 70B, Mixtral via OpenAI-compatible endpoints)
   - **DeepSeek** (DeepSeek-V3, DeepSeek-R1)
   - **OpenRouter** (Unified multi-provider access)
-  - **Ollama** (Local self-hosted models)
+  - **Ollama** (Local self-hosted models via OpenAI API format)
 - Real-time model switching directly from the top navigation bar.
 
 ### 3. Guided User Onboarding
