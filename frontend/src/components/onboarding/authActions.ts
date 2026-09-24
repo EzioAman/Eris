@@ -817,7 +817,6 @@ export async function googleVerifyLogin(payload: {
         if (resolvedUsername) localStorage.setItem('eris_username', resolvedUsername);
         if (resolvedDisplayName) localStorage.setItem('eris_user_display_name', resolvedDisplayName);
         if (resolvedAvatar) localStorage.setItem('eris_user_avatar', resolvedAvatar);
-        localStorage.setItem('eris_workspace_configured', 'true');
       }
       return {
         ok: true,
@@ -873,7 +872,6 @@ export async function oauthDirectLogin(payload: {
         if (resolvedUsername) localStorage.setItem('eris_username', resolvedUsername);
         if (resolvedDisplayName) localStorage.setItem('eris_user_display_name', resolvedDisplayName);
         if (resolvedAvatar) localStorage.setItem('eris_user_avatar', resolvedAvatar);
-        localStorage.setItem('eris_workspace_configured', 'true');
       }
       return {
         ok: true,
@@ -895,8 +893,40 @@ export async function oauthDirectLogin(payload: {
 }
 
 /**
+ * Synchronizes an authenticated Supabase user profile into the local ERIS SQLite keystore.
+ */
+export async function syncSupabaseUserToLocal(user: any): Promise<SessionConfigStatus> {
+  const oauthPayload = {
+    provider: 'google' as const,
+    email: user.email,
+    name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0],
+    avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture,
+    oauth_id: user.id,
+  };
+
+  const res = await oauthDirectLogin(oauthPayload);
+  if (!res.ok || !res.data) {
+    throw new Error(res.message || 'Failed to sync OAuth session to local database.');
+  }
+
+  const session = res.data;
+  const status: SessionConfigStatus = {
+    isAuthenticated: true,
+    isConfigured: true,
+    email: session.email,
+    token: session.token,
+    displayName: session.user_display_name,
+    username: session.username,
+    avatarUrl: session.avatar_url,
+  };
+
+  return status;
+}
+
+/**
  * Resolves the deterministic onboarding lifecycle state across app launches:
- * State 1: Intro -> State 2: Auth/Workspace -> State 3: Profile Settings -> State 4: Model & Keys -> State 5: Workspace
+ * - New Accounts: Step 1: Profile Setup -> Step 2: Model & Keys -> Step 3: Greeting -> Workspace
+ * - Returning Accounts: Model & Keys (unstored keys/session entry) -> Directly to Workspace
  */
 export function resolveOnboardingLifecycleState(
   session: SessionConfigStatus | null | undefined,
@@ -906,24 +936,28 @@ export function resolveOnboardingLifecycleState(
     return 'onboarding';
   }
 
-  const username = (session.username || '').trim().toLowerCase();
-  const hasChosenUsername = Boolean(
-    username && !['operator', 'developer', 'user', 'admin'].includes(username)
-  );
-  const localUsername = typeof localStorage !== 'undefined' ? (localStorage.getItem('eris_username') || '').toLowerCase().trim() : '';
-  const hasLocalUsername = Boolean(
-    localUsername && !['operator', 'developer', 'user', 'admin'].includes(localUsername)
-  );
+  const accountScopeKey = (
+    session.email ||
+    session.username ||
+    'local_user'
+  ).toLowerCase().trim();
 
-  if (!hasChosenUsername && !hasLocalUsername) {
+  // 1. Check if user has completed Profile Customization (Step 1 of New User Setup)
+  const isProfileCompleted = typeof localStorage !== 'undefined'
+    ? localStorage.getItem(`eris_profile_completed_${accountScopeKey}`) === 'true'
+    : false;
+
+  if (!isProfileCompleted) {
     return 'profile_setup';
   }
 
-  const isModelKeysConfigured =
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('eris_model_keys_configured') === 'true';
+  // 2. Check if Model & API Key Matrix has been configured/confirmed for this session
+  // (Returning users skip profile setup, but MUST enter/verify Model & Key Matrix each session)
+  const isSessionKeysConfirmed = typeof sessionStorage !== 'undefined'
+    ? sessionStorage.getItem('eris_session_keys_confirmed') === 'true'
+    : false;
 
-  if (!isModelKeysConfigured) {
+  if (!isSessionKeysConfirmed) {
     return 'model_keys_setup';
   }
 

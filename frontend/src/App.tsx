@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ErisIntro } from './components/intro/ErisIntro';
 import { OnboardingScreen } from './components/onboarding/OnboardingScreen';
 import { GreetingPage } from './components/greeting/GreetingPage';
-import { checkSessionAndConfig, resolveOnboardingLifecycleState, type SessionConfigStatus } from './components/onboarding/authActions';
+import { checkSessionAndConfig, syncSupabaseUserToLocal, type SessionConfigStatus } from './components/onboarding/authActions';
+import { supabase } from './lib/supabase';
 import { AppStateProvider, useAppState } from './context/AppStateContext';
 import { KeyboardShortcutProvider } from './context/KeyboardShortcutManager';
 import {
@@ -92,20 +93,131 @@ const GreetingWithTransition: React.FC<{
 
 const AppContent: React.FC = () => {
   const { current, navigate, goBack, canGoBack, reload, reloadKey } = useAppState();
+  const { isDevMode, setDevMode } = useDevMode();
   const [activeSession, setActiveSession] = useState<SessionConfigStatus | null>(null);
   const [showDevPanel, setShowDevPanel] = useState(false);
   const [setupStep, setSetupStep] = useState<'keys' | 'model'>('keys');
+  const [isNewUserSetup, setIsNewUserSetup] = useState(false);
   const lastTargetRef = useRef<HTMLElement | null>(null);
 
-  // Hydrate session from local database / backend on mount and precache assets
+  // Intercept after sign-in: Route deterministically through onboarding lifecycle state machine
+  const handleSessionEstablished = useCallback((session: SessionConfigStatus | null | undefined, isDev?: boolean) => {
+    if (session && session.isAuthenticated) {
+      setActiveSession(session);
+      if (typeof isDev === 'boolean') {
+        setDevMode(isDev);
+      }
+
+      const accountScope = (
+        session.email ||
+        session.username ||
+        'local_user'
+      ).toLowerCase().trim();
+
+      const isProfileCompleted = typeof localStorage !== 'undefined'
+        ? localStorage.getItem(`eris_profile_completed_${accountScope}`) === 'true'
+        : false;
+
+      // 1. New Account: Explicit 3-step setup (Profile -> Model & Keys -> Greeting)
+      if (!isProfileCompleted) {
+        setIsNewUserSetup(true);
+        navigate('profile_setup');
+        return;
+      }
+
+      // 2. Returning Account: Must enter Model & API Key Matrix each session (keys not stored permanently)
+      setIsNewUserSetup(false);
+      const isKeysConfirmed = typeof sessionStorage !== 'undefined'
+        ? sessionStorage.getItem('eris_session_keys_confirmed') === 'true'
+        : false;
+
+      if (!isKeysConfirmed) {
+        setSetupStep('keys');
+        navigate('model_keys_setup');
+      } else {
+        navigate('workspace');
+      }
+    } else {
+      navigate('intro');
+    }
+  }, [navigate, setDevMode]);
+
+  // Hydrate session from local database / backend on mount, listen for Supabase OAuth redirects, and precache assets
   useEffect(() => {
     preloadOnboardingAssets();
+
+    // 1. Listen for Supabase OAuth redirect completion (top-level handler for browser mode)
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session?.user) {
+        try {
+          const status = await syncSupabaseUserToLocal(session.user);
+          setActiveSession(status);
+          if (window.location.hash || window.location.search.includes('code=')) {
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+          handleSessionEstablished(status);
+        } catch (err) {
+          console.error('[Auth] Failed to sync Supabase user on redirect:', err);
+        }
+      }
+    });
+
+    // 2. Listen for deep link redirects from system browser (Electron desktop mode: eris://auth/callback)
+    const electron = (window as any).electron || (window as any).electronAPI;
+    let cleanupElectron: (() => void) | undefined;
+    if (electron?.onAuthDeepLink) {
+      cleanupElectron = electron.onAuthDeepLink(async (url: string) => {
+        try {
+          if (!url || typeof url !== 'string') return;
+          let params: URLSearchParams | null = null;
+          if (url.includes('#')) {
+            params = new URLSearchParams(url.split('#')[1]);
+          } else if (url.includes('?')) {
+            params = new URLSearchParams(url.split('?')[1]);
+          }
+          if (!params) return;
+
+          const code = params.get('code');
+          const accessToken = params.get('access_token');
+          const refreshToken = params.get('refresh_token');
+
+          let authUser: any = null;
+          if (code) {
+            const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+            if (error) throw error;
+            authUser = data?.user;
+          } else if (accessToken) {
+            const { data, error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken || '',
+            });
+            if (error) throw error;
+            authUser = data?.user;
+          }
+
+          if (authUser) {
+            const status = await syncSupabaseUserToLocal(authUser);
+            setActiveSession(status);
+            handleSessionEstablished(status);
+          }
+        } catch (err) {
+          console.error('[Auth] Failed to process Electron deep link:', err);
+        }
+      });
+    }
+
+    // 3. Hydrate session from local database / backend on mount
     checkSessionAndConfig().then((status) => {
       if (status.isAuthenticated) {
         setActiveSession(status);
       }
     });
-  }, []);
+
+    return () => {
+      authListener?.subscription?.unsubscribe();
+      if (typeof cleanupElectron === 'function') cleanupElectron();
+    };
+  }, [handleSessionEstablished]);
 
   const [contextInfo, setContextInfo] = useState<{
     isChat: boolean;
@@ -219,8 +331,6 @@ const AppContent: React.FC = () => {
     window.dispatchEvent(new CustomEvent('eris:new-chat'));
   };
 
-  const { isDevMode, setDevMode } = useDevMode();
-
   const handleSignOut = () => {
     try {
       localStorage.removeItem('eris_session');
@@ -229,20 +339,6 @@ const AppContent: React.FC = () => {
     }
     setActiveSession(null);
     navigate('intro', { replace: true, clearHistory: true });
-  };
-
-  // Intercept after sign-in: Route deterministically through onboarding lifecycle state machine
-  const handleSessionEstablished = (session: SessionConfigStatus | null | undefined, isDev?: boolean) => {
-    if (session && session.isAuthenticated) {
-      setActiveSession(session);
-      if (typeof isDev === 'boolean') {
-        setDevMode(isDev);
-      }
-      const targetScreen = resolveOnboardingLifecycleState(session, 'greeting');
-      navigate(targetScreen);
-    } else {
-      navigate('intro');
-    }
   };
 
   const handleSaveProfile = async (profileState: ProfileState) => {
@@ -341,13 +437,22 @@ const AppContent: React.FC = () => {
       console.error('Failed to persist profile:', err);
     }
 
-    // If user has already configured model and keys (e.g. editing from workspace), return to workspace
-    const isModelKeysConfigured = typeof localStorage !== 'undefined' && localStorage.getItem('eris_model_keys_configured') === 'true';
-    if (isModelKeysConfigured || activeSession?.isConfigured) {
-      navigate('workspace');
-    } else {
-      navigate('model_keys_setup');
-    }
+    const currentScope = (
+      activeSession?.email ||
+      profileState.email ||
+      activeSession?.username ||
+      profileState.username ||
+      'local_user'
+    ).toLowerCase().trim();
+
+    // Mark profile customization completed for this account
+    try {
+      localStorage.setItem(`eris_profile_completed_${currentScope}`, 'true');
+    } catch {}
+
+    // Advance directly to Step 2: Model & API Key Matrix
+    setSetupStep('keys');
+    navigate('model_keys_setup');
   };
 
   const accountScopeKey = (
@@ -547,7 +652,11 @@ const AppContent: React.FC = () => {
                     isDarkMode={typeof window !== 'undefined' ? (document.documentElement.classList.contains('dark') || localStorage.getItem('eris_theme') !== 'light') : true}
                     onSave={handleSaveProfile}
                     onCancel={() => {
-                      if (activeSession?.isAuthenticated && (localStorage.getItem('eris_model_keys_configured') === 'true' || localStorage.getItem('eris_workspace_configured') === 'true')) {
+                      const currentScope = (activeSession?.email || activeSession?.username || 'local_user').toLowerCase().trim();
+                      const isProfileDone = typeof localStorage !== 'undefined'
+                        ? localStorage.getItem(`eris_profile_completed_${currentScope}`) === 'true'
+                        : false;
+                      if (activeSession?.isAuthenticated && isProfileDone) {
                         navigate('workspace');
                       } else {
                         navigate('intro');
@@ -601,9 +710,14 @@ const AppContent: React.FC = () => {
                       onClose={() => setSetupStep('keys')}
                       onConfirmWorkspace={() => {
                         try {
+                          sessionStorage.setItem('eris_session_keys_confirmed', 'true');
                           localStorage.setItem('eris_model_keys_configured', 'true');
                         } catch {}
-                        navigate('workspace');
+                        if (isNewUserSetup) {
+                          navigate('greeting');
+                        } else {
+                          navigate('workspace');
+                        }
                       }}
                     />
                   )}

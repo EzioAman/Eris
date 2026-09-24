@@ -73,7 +73,6 @@ export function SocialConnections({ onSuccess, onError }: SocialConnectionsProps
       if (resolvedAvatar) {
         localStorage.setItem('eris_user_avatar', resolvedAvatar);
       }
-      localStorage.setItem('eris_workspace_configured', 'true');
     }
 
     if (onSuccess) {
@@ -81,61 +80,77 @@ export function SocialConnections({ onSuccess, onError }: SocialConnectionsProps
     }
   };
 
-  // Listen for deep link redirects from system browser (eris://auth/callback)
+  // 1. Listen for Supabase browser session changes (Web mode)
   useEffect(() => {
-    const electron = (window as any).electron || (window as any).electronAPI;
-    if (!electron?.onAuthDeepLink) return;
-
-    const cleanup = electron.onAuthDeepLink(async (url: string) => {
-      try {
-        setIsLoading(true);
-        setDevNotice(null);
-
-        if (!url || typeof url !== 'string') return;
-
-        // Parse query params and hash fragment
-        let params: URLSearchParams | null = null;
-        if (url.includes('#')) {
-          params = new URLSearchParams(url.split('#')[1]);
-        } else if (url.includes('?')) {
-          params = new URLSearchParams(url.split('?')[1]);
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session?.user) {
+        try {
+          setIsLoading(true);
+          await syncSessionToLocal(session.user);
+        } catch (err: any) {
+          const msg = err?.message || 'Authentication error syncing user session.';
+          setDevNotice(msg);
+          if (onError) onError(msg);
+        } finally {
+          setIsLoading(false);
         }
-
-        if (!params) return;
-
-        const code = params.get('code');
-        const accessToken = params.get('access_token');
-        const refreshToken = params.get('refresh_token');
-
-        if (code) {
-          // PKCE flow code exchange
-          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-          if (data?.user) {
-            await syncSessionToLocal(data.user);
-          }
-        } else if (accessToken) {
-          // Implicit token flow
-          const { data, error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken || '',
-          });
-          if (error) throw error;
-          if (data?.user) {
-            await syncSessionToLocal(data.user);
-          }
-        }
-      } catch (err: any) {
-        const msg = err?.message || 'Authentication error. Please retry.';
-        setDevNotice(msg);
-        if (onError) onError(msg);
-      } finally {
-        setIsLoading(false);
       }
     });
 
+    // 2. Listen for deep link redirects from system browser (Electron desktop mode: eris://auth/callback)
+    const electron = (window as any).electron || (window as any).electronAPI;
+    let cleanupElectron: (() => void) | undefined;
+
+    if (electron?.onAuthDeepLink) {
+      cleanupElectron = electron.onAuthDeepLink(async (url: string) => {
+        try {
+          setIsLoading(true);
+          setDevNotice(null);
+
+          if (!url || typeof url !== 'string') return;
+
+          let params: URLSearchParams | null = null;
+          if (url.includes('#')) {
+            params = new URLSearchParams(url.split('#')[1]);
+          } else if (url.includes('?')) {
+            params = new URLSearchParams(url.split('?')[1]);
+          }
+
+          if (!params) return;
+
+          const code = params.get('code');
+          const accessToken = params.get('access_token');
+          const refreshToken = params.get('refresh_token');
+
+          if (code) {
+            const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+            if (error) throw error;
+            if (data?.user) {
+              await syncSessionToLocal(data.user);
+            }
+          } else if (accessToken) {
+            const { data, error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken || '',
+            });
+            if (error) throw error;
+            if (data?.user) {
+              await syncSessionToLocal(data.user);
+            }
+          }
+        } catch (err: any) {
+          const msg = err?.message || 'Authentication error. Please retry.';
+          setDevNotice(msg);
+          if (onError) onError(msg);
+        } finally {
+          setIsLoading(false);
+        }
+      });
+    }
+
     return () => {
-      if (typeof cleanup === 'function') cleanup();
+      authListener?.subscription?.unsubscribe();
+      if (typeof cleanupElectron === 'function') cleanupElectron();
     };
   }, [onSuccess, onError]);
 
@@ -145,28 +160,33 @@ export function SocialConnections({ onSuccess, onError }: SocialConnectionsProps
 
     try {
       const electron = (window as any).electron || (window as any).electronAPI;
+      const isElectron = Boolean(electron);
 
-      // 1. Generate Supabase Google OAuth URL
+      // In Electron desktop app, redirect via custom protocol 'eris://auth/callback'
+      // In web browser (dev/web mode), redirect to the active browser origin
+      const redirectUrl = isElectron
+        ? 'eris://auth/callback'
+        : window.location.origin;
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: 'eris://auth/callback',
-          skipBrowserRedirect: true,
+          redirectTo: redirectUrl,
+          skipBrowserRedirect: isElectron, // in browser, standard redirect; in Electron, openExternal
         },
       });
 
       if (error) throw error;
-      if (!data?.url) {
-        throw new Error('Unable to generate authentication URL from Supabase.');
-      }
 
-      // 2. Open in external system browser (Google blocks embedded webviews)
-      if (electron?.openExternal) {
-        await electron.openExternal(data.url);
-      } else if (electron?.invoke) {
-        await electron.invoke('shell:openExternal', data.url);
-      } else {
-        window.open(data.url, '_blank');
+      if (isElectron) {
+        if (!data?.url) {
+          throw new Error('Unable to generate authentication URL from Supabase.');
+        }
+        if (electron?.openExternal) {
+          await electron.openExternal(data.url);
+        } else if (electron?.invoke) {
+          await electron.invoke('shell:openExternal', data.url);
+        }
       }
     } catch (err: any) {
       const errMsg = err?.message || 'Google sign-in failed. Please try again.';

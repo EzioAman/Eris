@@ -1,8 +1,14 @@
 import React from 'react';
 import { cn } from '../../lib/utils';
 import erisDefaultGif from '../../assets/eris_default.gif';
+import erisThinkingSvg from '../../assets/eris_thinking.svg';
+import erisWorkingSvg from '../../assets/eris_working.svg';
+import erisIdleSvg from '../../assets/eris_idle.svg';
+import erisSleepSvg from '../../assets/eris_sleep.svg';
+import erisSuccessSvg from '../../assets/eris_success.svg';
+import erisErrorSvg from '../../assets/eris_error.svg';
 
-export type AgentState = 'idle' | 'thinking' | 'working' | 'speaking' | 'alert' | 'success' | 'error';
+export type AgentState = 'idle' | 'thinking' | 'working' | 'speaking' | 'alert' | 'success' | 'error' | 'sleep';
 
 export interface ErisAvatarProps {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
@@ -37,8 +43,27 @@ export const ErisAvatar: React.FC<ErisAvatarProps> = ({
 }) => {
   const effectiveState: AgentState = isThinking ? 'thinking' : state;
 
-  // Standardize on default animated ERIS logo for vivid, high-contrast display in all themes
-  const avatarSrc = erisDefaultGif;
+  // Dynamically map agent/thinking state to its authentic SVG illustration
+  const avatarSrc = (() => {
+    switch (effectiveState) {
+      case 'thinking':
+        return erisThinkingSvg;
+      case 'working':
+      case 'speaking':
+        return erisWorkingSvg;
+      case 'alert':
+      case 'error':
+        return erisErrorSvg;
+      case 'success':
+        return erisSuccessSvg;
+      case 'sleep':
+        return erisSleepSvg;
+      case 'idle':
+        return erisIdleSvg;
+      default:
+        return erisDefaultGif;
+    }
+  })();
 
   // State-specific border glow and pulse styling
   const stateRingClass = (() => {
