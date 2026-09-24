@@ -1,6 +1,7 @@
 # ERIS — Autonomous Desktop AI Workspace
 
-[![Release](https://img.shields.io/badge/Release-v0.1.0--beta-blue.svg)](https://github.com/EzioAman/ERIS/releases)
+[![Release](https://img.shields.io/badge/Release-v0.1.0--beta-blue.svg)](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta)
+[![Download for Windows](https://img.shields.io/badge/Download-ERIS%20Setup%20(Windows)-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/Frontend-React%2019%20%7C%20Vite%208-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
@@ -18,8 +19,8 @@ Whether you are connected to Google Gemini, OpenRouter, Groq, or running a 100% 
 - [Key Capabilities](#key-capabilities)
 - [Visual Showcase](#visual-showcase)
 - [Download & Installation](#download--installation)
-  - [Option 1: Windows Setup Installer (Recommended)](#option-1-windows-setup-installer-recommended)
-  - [Option 2: Standalone Portable ZIP](#option-2-standalone-portable-zip)
+  - [Windows Setup Installer (.exe)](#windows-setup-installer-exe)
+  - [Verification & Integrity](#verification--integrity)
 - [Quick Start Guide](#quick-start-guide)
   - [1. Connect Your API Keys](#1-connect-your-api-keys)
   - [2. Select an Active Model](#2-select-an-active-model)
@@ -93,27 +94,30 @@ Review code changes before applying them with an interactive slider or side-by-s
 
 ## Download & Installation
 
-Pre-built binaries for Windows 10 and Windows 11 (64-bit) are available on the [Releases](https://github.com/EzioAman/ERIS/releases) page.
+The official installer for Windows 10 and Windows 11 (64-bit) is available on the [GitHub Releases](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta) page.
 
-### Option 1: Windows Setup Installer (Recommended)
+### Windows Setup Installer (.exe)
 
-1. Download **`ERIS-Setup-0.1.0-beta.exe`** from the latest release.
-2. Launch the installer. It will:
-   - Install ERIS into your user applications folder.
-   - Create a **Desktop Shortcut**.
-   - Add ERIS to your Windows **Start Menu**.
-   - Provide an automatic uninstaller registered in Windows Settings.
-3. Launch ERIS from your Desktop or Start Menu.
+| Asset | Platform | Download |
+| :--- | :--- | :--- |
+| **ERIS Setup 0.1.0-beta.exe** | Windows 10 / 11 (x64) | [**Download from GitHub Releases**](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta) |
 
-### Option 2: Standalone Portable ZIP
+#### Installation Steps:
+1. Download **`ERIS Setup 0.1.0-beta.exe`** from the release page.
+2. Run the installer:
+   - Select your preferred destination folder.
+   - Choose whether to create Desktop and Start Menu shortcuts.
+3. Launch **ERIS** from your Desktop or Start Menu.
+4. Sign in with Google or Email, add your model API keys, and start working.
 
-1. Download **`ERIS-v0.1.0-beta-windows.zip`**.
-2. Extract the ZIP archive to your preferred directory.
-3. Double-click **`ERIS.exe`** to run immediately without installation.
+### Verification & Integrity
+| File | Size | SHA-256 Checksum |
+| :--- | :--- | :--- |
+| `ERIS Setup 0.1.0-beta.exe` | ~212.8 MB | `b8b70348c113c62b2fe53283d60a860b1b42d88aa8dc482014f0d98f8d0b8421` |
 
 > [!NOTE]
 > **Windows SmartScreen Notice**:
-> If Windows displays *"Windows protected your PC"* on initial launch, click **More info** and then select **Run anyway**. This is standard behavior for newly packaged open-source binaries that have not yet built download reputation with Microsoft.
+> If Windows displays *"Windows protected your PC"* on initial launch, click **More info** and then select **Run anyway**. This is standard for newly released open-source executables that have not yet accumulated download reputation with Microsoft SmartScreen.
 
 ---
 
