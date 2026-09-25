@@ -33,6 +33,7 @@ class ChatMessageRequest(BaseModel):
     userId: Optional[str] = None
     isWebSearch: Optional[bool] = False
     executionMode: Optional[str] = "speed"
+    model: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -239,7 +240,7 @@ async def process_chat_message(payload: ChatMessageRequest):
         message=text,
         session_id=session_id,
         user_id=payload.userId,
-        active_model=None,
+        active_model=payload.model or None,
         execution_mode=payload.executionMode,
     ):
         if event.get("type") == "done":
@@ -278,7 +279,7 @@ async def stream_chat_message(payload: ChatMessageRequest):
             message=text,
             session_id=session_id,
             user_id=payload.userId,
-            active_model=None,
+            active_model=payload.model or None,
             execution_mode=payload.executionMode,
         ):
             yield f"data: {json.dumps(event)}\n\n"

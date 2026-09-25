@@ -481,11 +481,17 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       }
     };
 
+    const handleOpenModelConfig = () => {
+      setIsModelConfigOpen(true);
+    };
+
     window.addEventListener('eris:model-changed', handleModelChanged);
     window.addEventListener('eris:mode-changed', handleModeChanged);
+    window.addEventListener('eris:open-model-config', handleOpenModelConfig);
     return () => {
       window.removeEventListener('eris:model-changed', handleModelChanged);
       window.removeEventListener('eris:mode-changed', handleModeChanged);
+      window.removeEventListener('eris:open-model-config', handleOpenModelConfig);
     };
   }, []);
 
@@ -792,6 +798,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             sessionId: `${userScopeKey}_${activeChatId}`,
             userId: userScopeKey,
             isWebSearch,
+            model: activeModel || undefined,
+            executionMode,
           }),
         });
 

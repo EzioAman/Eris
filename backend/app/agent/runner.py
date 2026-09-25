@@ -37,7 +37,10 @@ class AgentRunner:
         self.workspace_path = workspace_path or settings.WORKSPACE_PATH
         self.memory_file = self.workspace_path / "memory" / "memory.json"
         self.memory = self._load_memory()
-        self.active_model: Optional[str] = self.memory.get("active_model") or "openrouter/openrouter/auto"
+        raw_model = self.memory.get("active_model")
+        if raw_model and "openrouter/openrouter/" in raw_model:
+            raw_model = raw_model.replace("openrouter/openrouter/", "openrouter/")
+        self.active_model: Optional[str] = raw_model or "openrouter/auto"
         self.execution_mode: str = self.memory.get("execution_mode", "speed")
         self._cached_models: List[Dict[str, Any]] = []
         self._models_cached_at: float = 0.0
@@ -153,11 +156,20 @@ class AgentRunner:
         """Records a message to memory history, capped at 50 messages."""
         self.append_to_user_history(None, role, content)
 
-    def set_active_model(self, model_id: Optional[str]) -> bool:
+    def set_active_model(self, model_id: Optional[str], user_id: Optional[str] = None) -> bool:
         """Updates the active LLM identifier."""
-        self.active_model = model_id or None
+        clean_id = model_id.strip() if model_id else None
+        if clean_id and "openrouter/openrouter/" in clean_id:
+            clean_id = clean_id.replace("openrouter/openrouter/", "openrouter/")
+        self.active_model = clean_id or None
         self.memory["active_model"] = self.active_model
         self.save_memory()
+        if user_id:
+            safe_u = self._sanitize_user_id(user_id)
+            if safe_u != "default_user":
+                u_mem = self.load_user_memory(safe_u)
+                u_mem["active_model"] = self.active_model
+                self.save_user_memory(safe_u, u_mem)
         logger.info(f"Switched active model to: {self.active_model}")
         return True
 
@@ -242,22 +254,11 @@ class AgentRunner:
             elif provider == "openrouter":
                 # Ensure OpenRouter Auto dynamic router is ALWAYS pinned at the top
                 models.append({
-                    "id": "openrouter/openrouter/auto",
+                    "id": "openrouter/auto",
                     "name": "OpenRouter Auto (Smart Dynamic Router)",
                     "provider": "OpenRouter",
                     "context": "128k - 200k tokens",
                     "capabilities": ["Coding", "Reasoning", "Vision", "Free"],
-                    "speed": "120+ tps",
-                    "cost": "Dynamic (Optimized)",
-                    "status": "verified",
-                    "verified": True,
-                })
-                models.append({
-                    "id": "openrouter/auto",
-                    "name": "OpenRouter Auto Router",
-                    "provider": "OpenRouter",
-                    "context": "128k - 200k tokens",
-                    "capabilities": ["Coding", "Reasoning", "Vision"],
                     "speed": "120+ tps",
                     "cost": "Dynamic (Optimized)",
                     "status": "verified",

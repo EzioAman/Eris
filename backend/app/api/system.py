@@ -401,7 +401,10 @@ async def list_available_models():
 
 
 class SelectModelRequest(BaseModel):
-    modelId: str
+    modelId: Optional[str] = None
+    model_id: Optional[str] = None
+    model: Optional[str] = None
+    userId: Optional[str] = None
 
 
 @router.post("/models/select")
@@ -409,14 +412,22 @@ async def select_model(payload: SelectModelRequest):
     """
     Applies model selection directly into Eris Core and persists to memory.json.
     """
+    target_model = payload.modelId or payload.model_id or payload.model
+    if not target_model:
+        raise HTTPException(status_code=400, detail="Missing model identifier (modelId, model_id, or model required).")
+
     eris = _get_active_eris()
     if not eris:
         raise HTTPException(status_code=500, detail="Eris Core engine offline.")
-    
+
+    user_id = payload.userId
     if hasattr(eris, "set_active_model"):
-        ok = eris.set_active_model(payload.modelId)
+        try:
+            ok = eris.set_active_model(target_model, user_id=user_id)
+        except TypeError:
+            ok = eris.set_active_model(target_model)
     elif hasattr(eris, "apply_model_selection"):
-        ok = eris.apply_model_selection(payload.modelId)
+        ok = eris.apply_model_selection(target_model)
     else:
         ok = False
 

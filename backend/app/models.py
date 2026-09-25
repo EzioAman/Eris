@@ -81,7 +81,7 @@ class WorkspaceConfig(Base):
     __table_args__ = {"extend_existing": True}
 
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    active_model = Column(String(100), default="openrouter/openrouter/auto", nullable=False)
+    active_model = Column(String(100), default="openrouter/auto", nullable=False)
     execution_mode = Column(String(20), default="speed", nullable=False)
     ui_preferences = Column(JSON, default=dict, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

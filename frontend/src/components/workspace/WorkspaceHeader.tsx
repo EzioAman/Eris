@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SlidersHorizontal, Search, Palette, Check, Sparkles, LayoutTemplate, Bell } from 'lucide-react';
+import { SlidersHorizontal, Search, Palette, Check, Sparkles, LayoutTemplate, Bell, Cpu } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { formatModelName } from '../../lib/modelUtils';
 import type { SessionConfigStatus } from '../onboarding/authActions';
 import { UserMenu } from '../auth/UserMenu';
 import { AnimatedThemeTogglerTemplate } from '../../../ui_templates/AnimatedThemeTogglerTemplate';
@@ -60,7 +61,7 @@ export interface WorkspaceHeaderProps {
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   sessionStatus,
   isDarkMode,
-  activeModel: _activeModel,
+  activeModel,
   executionMode: _executionMode = 'speed',
   showRightSidebar: _showRightSidebar = false,
   isStreaming = false,
@@ -201,7 +202,26 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           </div>
         )}
 
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Active Model Indicator & Switcher Button */}
+          <button
+            type="button"
+            onClick={onOpenModelConfig}
+            title={`Active LLM: ${activeModel || 'OpenRouter Auto'} (Click to change model)`}
+            className={cn(
+              'cursor-pointer inline-flex h-8 items-center gap-2 px-2.5 rounded-lg border transition-all text-xs font-medium shadow-2xs group',
+              isDarkMode
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:border-emerald-500/50'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-300'
+            )}
+          >
+            <span className="size-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+            <span className="font-semibold max-w-[150px] truncate">
+              {formatModelName(activeModel || 'openrouter/auto')}
+            </span>
+            <Cpu className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity shrink-0" />
+          </button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button

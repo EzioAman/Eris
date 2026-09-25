@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowDown, Terminal as TerminalIcon, Sparkles, Lightbulb, Workflow, Globe } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { formatModelName } from '../../lib/modelUtils';
 import type { ChatMessage, ScheduledTaskItem, ActiveThinkingState } from './chatTypes';
 import { ChatMessageBubble } from './ChatMessageBubble';
 import { MarkdownContent } from './MarkdownContent';
@@ -274,7 +275,7 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
                       )}
                     >
                       <span className={cn('size-1.5 rounded-full shrink-0', activeThinking ? 'bg-amber-400 animate-ping' : 'bg-blue-400 animate-pulse')} />
-                      <span>{activeModel || 'gemini-2.5-flash'}</span>
+                      <span>{formatModelName(activeModel || 'openrouter/auto')}</span>
                     </span>
                     <span className="text-[11px] text-neutral-400 font-mono">
                       {activeThinking ? 'Thinking & reasoning...' : 'Responding...'}

@@ -13,6 +13,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { formatModelName } from '../../lib/modelUtils';
 import { FileUploadTemplate } from '../../../ui_templates/FileUploadTemplate';
 
 interface TokenUsageData {
@@ -549,6 +550,22 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
               >
                 <Globe className="h-3.5 w-3.5 shrink-0" />
                 <span>Web Browser</span>
+              </button>
+
+              {/* Active Model Quick Selector Button */}
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('eris:open-model-config'))}
+                title={`Active LLM: ${activeModelInfo.name} (Click to switch model)`}
+                className={cn(
+                  'cursor-pointer inline-flex h-7 items-center gap-1.5 px-2.5 rounded-lg border transition-all text-xs font-medium',
+                  isDarkMode
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:border-emerald-500/50'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300'
+                )}
+              >
+                <Cpu className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                <span className="font-semibold max-w-[130px] truncate">{formatModelName(activeModelInfo.name)}</span>
               </button>
             </div>
 
