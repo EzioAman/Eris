@@ -441,7 +441,7 @@ class ErisServerHandler(http.server.SimpleHTTPRequestHandler):
                 "goal": goal,
                 "user": session["email"],
                 "status": "active",
-                "message": f"Eris ❖ Dispatched task to [{target_agent.upper()}]. Processing with Agentic RAG..."
+                "message": f"Eris [Agent] Dispatched task to [{target_agent.upper()}]. Processing with Agentic RAG..."
             })
             return
 
@@ -493,12 +493,12 @@ class ReusableTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
 
 def main():
-    print(f"❖ ERIS Cybernetic Interface Server starting on http://localhost:{PORT}")
+    print(f"[*] ERIS Cybernetic Interface Server starting on http://localhost:{PORT}")
     with ReusableTCPServer(("", PORT), ErisServerHandler) as httpd:
-        print(f"✓ Serving UI from: {SERVE_DIR}")
-        print(f"✓ Auth API active with Gmail SMTP pipeline")
+        print(f"[+] Serving UI from: {SERVE_DIR}")
+        print(f"[+] Auth API active with Gmail SMTP pipeline")
 
-        print(f"✓ System State, Guardrail & Agent Dispatch APIs Online")
+        print(f"[+] System State, Guardrail & Agent Dispatch APIs Online")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

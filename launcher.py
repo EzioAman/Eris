@@ -8,6 +8,26 @@ import time
 import webbrowser
 from pathlib import Path
 
+# Configure standard streams early for Windows code pages (CP1252/CP437) and PyInstaller GUI mode
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("PYTHONUTF8", "1")
+
+if sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, Exception):
+        pass
+else:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+
+if sys.stderr is not None:
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, Exception):
+        pass
+else:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 # Ensure multiprocessing support in frozen executable
 multiprocessing.freeze_support()
 
@@ -74,11 +94,29 @@ def open_desktop_window(url: str, delay: float = 1.2):
 
 
 def main():
+    if "--version" in sys.argv or "-v" in sys.argv:
+        print(f"ERIS Core v0.1.1-beta (Python {sys.version.split()[0]})")
+        return
+
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("ERIS Desktop Core Launcher")
+        print("Usage: eris_backend.exe [--window] [--browser] [--port <PORT>] [--version] [--help]")
+        return
+
     port = settings.PORT or 5174
+    if "--port" in sys.argv:
+        try:
+            idx = sys.argv.index("--port")
+            if idx + 1 < len(sys.argv):
+                port = int(sys.argv[idx + 1])
+        except (ValueError, IndexError):
+            pass
+
     host = settings.HOST or "127.0.0.1"
     url = f"http://{host}:{port}"
 
-    print(f"❖ Launching ERIS Desktop Core on {url}...")
+    logger.info(f"Launching ERIS Desktop Core on {url}...")
+    print(f"[*] Launching ERIS Desktop Core on {url}...")
 
     # Open app window ONLY if explicitly requested via flag or env var (headless by default)
     should_open_window = (
@@ -100,4 +138,16 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.critical(f"Fatal error during ERIS startup: {e}", exc_info=True)
+        try:
+            log_file = BASE_DIR / "eris_startup_error.log"
+            with open(log_file, "a", encoding="utf-8") as f:
+                import traceback
+                f.write(f"\n--- ERIS Fatal Crash [{time.ctime()}] ---\n")
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
+        raise

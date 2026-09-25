@@ -17,6 +17,50 @@ else:
     # Development mode: Always resolve to project root
     WORKSPACE_DIR = Path(__file__).resolve().parent.parent.parent
 
+def _resolve_writable_memory_dir(base_workspace: Path) -> Path:
+    """Ensures memory store is writable, falling back to LocalAppData if Program Files is protected."""
+    candidate = base_workspace / "memory"
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        probe = candidate / ".probe_perm"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return candidate
+    except (OSError, PermissionError):
+        pass
+
+    local_app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    if local_app_data:
+        fallback = Path(local_app_data) / "ERIS" / "memory"
+    else:
+        fallback = Path.home() / ".eris" / "memory"
+
+    try:
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+    except Exception:
+        return candidate
+
+def _resolve_tools_dir(base_workspace: Path) -> Path:
+    """Discovers bundled tools in developmental or packaged PyInstaller layouts."""
+    candidate = base_workspace / "tools"
+    if candidate.exists():
+        return candidate
+    if getattr(sys, "frozen", False):
+        exe_tools = Path(sys.executable).resolve().parent / "tools"
+        if exe_tools.exists():
+            return exe_tools
+        internal_tools = Path(sys.executable).resolve().parent / "_internal" / "tools"
+        if internal_tools.exists():
+            return internal_tools
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass and (Path(meipass) / "tools").exists():
+            return Path(meipass) / "tools"
+    return candidate
+
+RESOLVED_MEMORY_DIR = _resolve_writable_memory_dir(WORKSPACE_DIR)
+RESOLVED_TOOLS_DIR = _resolve_tools_dir(WORKSPACE_DIR)
+
 ENV_FILE = WORKSPACE_DIR / ".env"
 if load_dotenv and ENV_FILE.exists():
     load_dotenv(ENV_FILE)
@@ -42,7 +86,7 @@ class Settings(BaseSettings):
 
     # Database Configuration (Centralized PostgreSQL with SQLite Fallback)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/eris_db"
-    FALLBACK_SQLITE_URL: str = f"sqlite+aiosqlite:///{WORKSPACE_DIR / 'memory' / 'auth.db'}"
+    FALLBACK_SQLITE_URL: str = f"sqlite+aiosqlite:///{(RESOLVED_MEMORY_DIR / 'auth.db').as_posix()}"
     
     # Security
     SECRET_KEY: str = os.getenv("SECRET_KEY", "eris_runtime_master_secret_key_32bytes")
@@ -52,8 +96,8 @@ class Settings(BaseSettings):
 
     # Directory Paths
     WORKSPACE_PATH: Path = WORKSPACE_DIR
-    MEMORY_DIR: Path = WORKSPACE_DIR / "memory"
-    TOOLS_DIR: Path = WORKSPACE_DIR / "tools"
+    MEMORY_DIR: Path = RESOLVED_MEMORY_DIR
+    TOOLS_DIR: Path = RESOLVED_TOOLS_DIR
 
     # SMTP Email Configuration
     SMTP_HOST: str = os.getenv("SMTP_HOST", "")

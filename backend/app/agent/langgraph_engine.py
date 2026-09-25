@@ -29,7 +29,7 @@ class AgentGraphState(BaseModel):
 
 async def classify_node(state: AgentGraphState) -> Dict[str, Any]:
     """Node 1: Classifies intent and matches available dynamic tools."""
-    logger.info("❖ [LangGraph] Entering classify_node")
+    logger.info("[LangGraph] Entering classify_node")
     p = state.user_prompt.lower()
     intent = "read_inspection" if any(k in p for k in ["list", "dir", "read", "show", "cat"]) else "action_execute"
     return {
@@ -39,8 +39,8 @@ async def classify_node(state: AgentGraphState) -> Dict[str, Any]:
     }
 
 async def planner_node(state: AgentGraphState) -> Dict[str, Any]:
-    """Node 2: Structured reasoning using LiteLLM (Zero LangChain Chat Model wrappers)."""
-    logger.info(f"❖ [LangGraph] Entering planner_node (Iteration {state.iteration_count + 1})")
+    """Node 2: Structured reasoning using unified LLM client."""
+    logger.info(f"[LangGraph] Entering planner_node (Iteration {state.iteration_count + 1})")
     scanned_tools = DiscoveryService.scan_all_tools()
     tools_summary = ", ".join(t["name"] for t in scanned_tools[:10])
 
@@ -70,7 +70,7 @@ async def planner_node(state: AgentGraphState) -> Dict[str, Any]:
 
 async def actuator_node(state: AgentGraphState) -> Dict[str, Any]:
     """Node 3: Executes verified tools within sandbox boundaries."""
-    logger.info("❖ [LangGraph] Entering actuator_node")
+    logger.info("[LangGraph] Entering actuator_node")
     observations = state.tool_observations
     return {
         "active_node": "actuator",
@@ -79,7 +79,7 @@ async def actuator_node(state: AgentGraphState) -> Dict[str, Any]:
 
 async def reflection_node(state: AgentGraphState) -> Dict[str, Any]:
     """Node 4: Evaluates observation quality and computes min-max confidence score."""
-    logger.info("❖ [LangGraph] Entering reflection_node")
+    logger.info("[LangGraph] Entering reflection_node")
     score = 0.92  # high baseline confidence
     return {
         "active_node": "reflection",
@@ -89,7 +89,7 @@ async def reflection_node(state: AgentGraphState) -> Dict[str, Any]:
 
 async def synthesizer_node(state: AgentGraphState) -> Dict[str, Any]:
     """Node 5: Direct grounded answer synthesis strictly adhering to ai_slop.md."""
-    logger.info("❖ [LangGraph] Entering synthesizer_node")
+    logger.info("[LangGraph] Entering synthesizer_node")
     prompt = (
         f"You are ERIS in Accuracy Mode.\n"
         f"User prompt: {state.user_prompt}\n"

@@ -53,3 +53,4 @@ export * from './DataTableTemplate';
 export * from './IosDeviceTemplate';
 export * from './ChatThinkingUI';
 export * from './SubagentChainTemplate';
+export * from './UpdateCheckerNotificationTemplate';

@@ -62,13 +62,12 @@ hidden_imports.extend([
     "backend.app.services.user_db_service",
 ])
 
-# Data files to bundle (Zero personal memory, sessions, or environment files)
+# Data files to bundle (Zero personal memory, sessions, internal audits, or environment files)
 datas = [
     (str(PROJECT_ROOT / "frontend" / "dist"), "frontend/dist"),
     (str(PROJECT_ROOT / "tools"), "tools"),
     (str(PROJECT_ROOT / "assets"), "assets"),
-    (str(PROJECT_ROOT / "doc"), "doc"),
-    (str(PROJECT_ROOT / "docs"), "docs")
+    (str(PROJECT_ROOT / "doc" / "ai_slop.md"), "doc"),
 ]
 
 for pkg_data in ["cryptography", "langchain_core", "langgraph", "fastapi"]:

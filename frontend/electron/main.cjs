@@ -157,10 +157,16 @@ async function startBackendIfNecessary() {
     const fs = require('fs');
     let logStream = 'ignore';
     try {
-      const out = fs.openSync(path.join(backendDir, 'backend.log'), 'a');
+      const logDir = app.getPath('userData');
+      const out = fs.openSync(path.join(logDir, 'backend.log'), 'a');
       logStream = out;
     } catch (e) {
-      console.warn('[Electron] Could not open backend.log, falling back to ignore:', e);
+      try {
+        const out = fs.openSync(path.join(backendDir, 'backend.log'), 'a');
+        logStream = out;
+      } catch (errFallback) {
+        console.warn('[Electron] Could not open backend.log, falling back to ignore:', e);
+      }
     }
 
     backendProcess = spawn(exePath, ['--no-window'], {
@@ -276,6 +282,19 @@ function createMainWindow() {
           }
         }, 1500);
       }
+    } else if (!isReady) {
+      console.error('[Electron] Backend failed to initialize within timeout window.');
+      dialog.showErrorBox(
+        'ERIS Core Initialization Error',
+        'ERIS Backend server failed to start or did not respond on 127.0.0.1:5174 within 20 seconds.\n\n' +
+        'Troubleshooting:\n' +
+        '1. Ensure port 5174 is not in use by another program.\n' +
+        '2. Check Windows Defender / Antivirus settings.\n' +
+        '3. Check logs at: ' + path.join(app.getPath('userData'), 'backend.log')
+      );
+      isQuitting = true;
+      killBackendProcess();
+      app.quit();
     }
   };
   loadApp();

@@ -58,6 +58,14 @@ class DatabaseManager:
         )
 
         # 4. Auto-generate tables & enable extensions
+        try:
+            import backend.app.models  # Ensure all models are registered with Base.metadata
+        except ImportError:
+            try:
+                import app.models
+            except Exception:
+                pass
+
         async with self.engine.begin() as conn:
             if self.active_db_type == "postgresql":
                 try:

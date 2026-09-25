@@ -1,0 +1,18 @@
+{
+  "version": "0.1.1-beta",
+  "release_date": "2026-09-25T20:10:00Z",
+  "release_name": "ERIS v0.1.1-beta (Windows Stability & Resilient Streams)",
+  "download_url": "https://github.com/EzioAman/ERIS/releases/download/v0.1.1-beta/ERIS.Setup.0.1.1-beta.exe",
+  "sha256": "0CB40EB0B3A2AC1E4E94BD5E65CFE0165E4BE69E07F17A9231969BAA45D4A35E",
+  "size_bytes": 246185345,
+  "changelog": [
+    "Fixed Windows CP1252 charmap encoding crash on Western European/US Windows machines",
+    "Added LocalAppData write fallback for Program Files and restricted user environments",
+    "Added explicit Electron error notification dialog on backend initialization timeout",
+    "Added launcher --version fast exit to eliminate subprocess recursion in sandbox tools",
+    "Purged LiteLLM and redundant cloud SDKs, fully unified on LangChain (-85 MB footprint reduction)",
+    "Fixed SQLite schema auto-creation on fresh PCs to prevent missing table startup crashes",
+    "Stripped internal architecture audits and adversarial reports from binary packaging payload",
+    "Added UntitledUI Update Checker notification with real-time download and self-update engine"
+  ]
+}

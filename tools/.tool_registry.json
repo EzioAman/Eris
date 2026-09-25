@@ -34,5 +34,11 @@
         "hash": "987542d61a71b4916962586b8e131f7ed7d4715c54e86f0e0fc9c90ef4316bcb",
         "status": "verified",
         "last_tested": "1789766700"
+    },
+    "check_and_apply_update.py": {
+        "hash": "6dc4bbf69118c53f046d47d861b2f6aff0aaeebe15ca968108e75c09c7b6e672",
+        "status": "verified",
+        "last_tested": "1790347796.7921364",
+        "author": "eris"
     }
 }

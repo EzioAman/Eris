@@ -18,59 +18,43 @@ from backend.app.schemas.auth import (
 )
 from backend.app.services.auth_service import AuthService
 
+from backend.app.services.update_service import (
+    check_for_updates,
+    start_download_update,
+    get_update_progress,
+    apply_downloaded_update,
+    UpdateManifest,
+    UpdateProgress,
+)
+
 router = APIRouter(prefix="/api/system", tags=["System & Health"])
 
-CURRENT_ERIS_VERSION = "3.1.0"
+class DownloadUpdatePayload(BaseModel):
+    download_url: str
 
-@router.get("/check-update")
+class ApplyUpdatePayload(BaseModel):
+    silent: bool = True
+
+@router.get("/check-update", response_model=UpdateManifest)
 async def check_update():
-    """
-    Checks GitHub Releases for EzioAman/Eris to determine if a newer version is available.
-    Returns current version, latest version, update available flag, and release notes URL.
-    """
-    latest_version = CURRENT_ERIS_VERSION
-    update_available = False
-    release_url = "https://github.com/EzioAman/Eris/releases"
-    release_name = ""
-    published_at = ""
+    """Checks GitHub for newer ERIS releases and returns manifest."""
+    return await check_for_updates()
 
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            res = await client.get(
-                "https://api.github.com/repos/EzioAman/Eris/releases/latest",
-                headers={"User-Agent": "ERIS-Desktop-Client"},
-            )
-            if res.status_code == 200:
-                data = res.json()
-                tag = data.get("tag_name", "").lstrip("v").strip()
-                if tag:
-                    latest_version = tag
-                    release_url = data.get("html_url", release_url)
-                    release_name = data.get("name", "") or f"v{tag}"
-                    published_at = data.get("published_at", "")
+@router.post("/download-update", response_model=UpdateProgress)
+async def trigger_download_update(payload: DownloadUpdatePayload):
+    """Starts background download of installer binary."""
+    return start_download_update(payload.download_url)
 
-                    def parse_v(v: str):
-                        parts = []
-                        for p in re.split(r"[.\-]", v):
-                            if p.isdigit():
-                                parts.append(int(p))
-                        return parts
+@router.get("/update-progress", response_model=UpdateProgress)
+async def query_update_progress():
+    """Returns real-time download percentage and bytes."""
+    return get_update_progress()
 
-                    if parse_v(latest_version) > parse_v(CURRENT_ERIS_VERSION):
-                        update_available = True
-    except Exception:
-        # Graceful offline / timeout fallback: network unavailable or rate limited
-        pass
-
-    return {
-        "ok": True,
-        "current_version": CURRENT_ERIS_VERSION,
-        "latest_version": latest_version,
-        "update_available": update_available,
-        "release_url": release_url,
-        "release_name": release_name,
-        "published_at": published_at,
-    }
+@router.post("/apply-update")
+async def execute_apply_update(payload: Optional[ApplyUpdatePayload] = None):
+    """Executes downloaded installer and cleanly restarts ERIS."""
+    silent = payload.silent if payload else True
+    return apply_downloaded_update(silent=silent)
 
 @router.get("/health", response_model=SystemHealthReport)
 async def get_system_health():

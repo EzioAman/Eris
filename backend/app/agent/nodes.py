@@ -45,7 +45,7 @@ logger = logging.getLogger("eris.agent.nodes")
 
 
 def _convert_messages_for_llm(system_prompt: str, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
-    """Converts LangChain messages into standard LiteLLM/OpenAI message dicts with context window protection."""
+    """Converts LangChain messages into standard OpenAI message dicts with context window protection."""
     llm_msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
 
     # Prevent context window explosion: retain initial user query + last 8 turns

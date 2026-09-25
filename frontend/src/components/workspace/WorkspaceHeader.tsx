@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { SlidersHorizontal, Search, Palette, Check, Sparkles, LayoutTemplate } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { SlidersHorizontal, Search, Palette, Check, Sparkles, LayoutTemplate, Bell } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { SessionConfigStatus } from '../onboarding/authActions';
 import { UserMenu } from '../auth/UserMenu';
 import { AnimatedThemeTogglerTemplate } from '../../../ui_templates/AnimatedThemeTogglerTemplate';
+import { UpdateCheckerNotificationTemplate } from '../../../ui_templates/UpdateCheckerNotificationTemplate';
 import { Menubar } from '../navigation/Menubar';
 import { useDevMode, isDevIdentityConfirmed } from '../../context/DevModeContext';
 import { ErisAvatar, type AgentState } from '../ui/ErisAvatar';
@@ -102,6 +103,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
   const isRealAman = isDevIdentityConfirmed(activeBio, isDevMode);
   const [currentPreset, setCurrentPreset] = useState<ThemePreset>(() => getWorkspaceThemePreset(isDarkMode));
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const notificationRef = useRef<HTMLDivElement>(null);
   const [updateInfo, setUpdateInfo] = useState<{
     update_available: boolean;
     latest_version: string;
@@ -109,6 +112,18 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     release_url: string;
     release_name: string;
   } | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setIsNotificationOpen(false);
+      }
+    };
+    if (isNotificationOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isNotificationOpen]);
 
   useEffect(() => {
     fetch('/api/system/check-update')
@@ -308,19 +323,53 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Update Available Notification Pill */}
+          {/* Update Available Notification Pill (triggers notification popover) */}
           {updateInfo && updateInfo.update_available && (
-            <a
-              href={updateInfo.release_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={`ERIS v${updateInfo.latest_version} is available! Click to view latest release.`}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-all shadow-xs animate-pulse hover:animate-none cursor-pointer"
+            <button
+              type="button"
+              onClick={() => setIsNotificationOpen(true)}
+              title={`ERIS v${updateInfo.latest_version} is available! Click to inspect and update.`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/25 transition-all shadow-xs animate-pulse hover:animate-none cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Update v{updateInfo.latest_version} Available</span>
-            </a>
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Update v{updateInfo.latest_version}</span>
+            </button>
           )}
+
+          {/* Dashboard Notification Section (UntitledUI Update Checker Popover) */}
+          <div ref={notificationRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setIsNotificationOpen((prev) => !prev)}
+              title="System Notifications & Update Checker"
+              aria-label="System Notifications & Updates"
+              className={cn(
+                'cursor-pointer relative size-8 rounded-lg border flex items-center justify-center transition-colors shadow-2xs',
+                isNotificationOpen
+                  ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-400'
+                  : isDarkMode
+                  ? 'border-white/15 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                  : 'border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+              )}
+            >
+              <Bell className="w-4 h-4" />
+              {updateInfo?.update_available && (
+                <span className="absolute top-0.5 right-0.5 size-2 rounded-full bg-indigo-500 ring-2 ring-neutral-900 animate-pulse" />
+              )}
+            </button>
+
+            {/* UntitledUI Update Checker Popover Card */}
+            {isNotificationOpen && (
+              <div className="absolute right-0 mt-2 z-50 w-96 animate-in fade-in-50 zoom-in-95 duration-150 shadow-2xl">
+                <UpdateCheckerNotificationTemplate
+                  compact={true}
+                  isDarkMode={isDarkMode}
+                  onDismiss={() => setIsNotificationOpen(false)}
+                  className="shadow-2xl border-white/15 bg-neutral-900/98 backdrop-blur-2xl"
+                />
+              </div>
+            )}
+          </div>
 
           <button
             type="button"

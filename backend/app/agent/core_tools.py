@@ -638,7 +638,7 @@ class CoreToolbox:
                     "objective": obj,
                     "severity": "HIGH",
                     "status": "spawning",
-                    "text": f"❖ Delegating subagent: [{role}] -> {obj[:100]}"
+                    "text": f"[Agent] Delegating subagent: [{role}] -> {obj[:100]}"
                 })
             if agent_engine and hasattr(agent_engine, "spawn_subagent"):
                 return await agent_engine.spawn_subagent(arg)

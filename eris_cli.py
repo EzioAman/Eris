@@ -24,10 +24,10 @@ from prompt_builder import PromptBuilder, SystemState
 from auth import AuthEngine
 from tool_guardrails import ToolGuardrails
 
-# Litellm for provider-agnostic completions
-os.environ["LITELLM_LOG"] = "ERROR"
-import litellm
-litellm.suppress_debug_info = True
+try:
+    from backend.app.agent.llm_client import acompletion
+except ImportError:
+    from app.agent.llm_client import acompletion
 import requests
 
 # Load environment
@@ -1046,7 +1046,7 @@ class ErisCore:
 
         for model_candidate in candidates:
             try:
-                response = await litellm.acompletion(
+                response = await acompletion(
                     model=model_candidate,
                     messages=messages,
                     stream=True,
@@ -1250,7 +1250,6 @@ async def main():
             break
 
 if __name__ == "__main__":
-    litellm.suppress_debug_info = True
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):

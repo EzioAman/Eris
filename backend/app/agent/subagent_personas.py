@@ -113,7 +113,7 @@ class SubagentSwarmManager:
             persona_key = "researcher"
 
         persona = SUBAGENT_PERSONAS[persona_key]
-        logger.info(f"❖ Spawning elastic subagent [{persona['role']}] with model {active_model}...")
+        logger.info(f"[Agent] Spawning elastic subagent [{persona['role']}] with model {active_model}...")
 
         messages = [
             {"role": "system", "content": persona["system_prompt"]},

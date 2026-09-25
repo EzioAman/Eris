@@ -5,6 +5,19 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Ensure UTF-8 stream output on Windows platforms
+if sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, Exception):
+        pass
+if sys.stderr is not None:
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, Exception):
+        pass
+
 from backend.app.config import settings
 from backend.app.database import db_manager
 from backend.app.api import auth, system, workspace, websocket, workflows, connectors, chat, contact, plugins, tools, settings_api, keys_api
@@ -29,7 +42,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version="3.1.0",
+    version="0.1.1-beta",
     lifespan=lifespan
 )
 

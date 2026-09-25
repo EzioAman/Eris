@@ -7,6 +7,7 @@ import EmilLoadingBar from '../ui/emil-loading-bar';
 import type { SessionConfigStatus } from '../onboarding/authActions';
 import { BadgeTemplate } from '../../../ui_templates/BadgeTemplate';
 import { StepChecklist, type StepCheckItem } from '../../../ui_templates/StepChecklistTemplate';
+import { UpdateCheckerNotificationTemplate } from '../../../ui_templates/UpdateCheckerNotificationTemplate';
 import { UserMenu } from '../auth/UserMenu';
 
 export interface GreetingPageProps {
@@ -42,6 +43,7 @@ export const GreetingPage: React.FC<GreetingPageProps> = ({
   const [currentTip] = useState(() => ERIS_TIPS[Math.floor(Math.random() * ERIS_TIPS.length)]);
   const [progress, setProgress] = useState(0);
   const [isCompleted, setIsCompleted] = useState(false);
+  const [showUpdateNotification, setShowUpdateNotification] = useState(true);
 
   const [failedError, setFailedError] = useState<string | null>(null);
 
@@ -183,7 +185,7 @@ export const GreetingPage: React.FC<GreetingPageProps> = ({
       </header>
 
       {/* 3. Centered Title */}
-      <div className="relative z-20 w-full max-w-4xl mx-auto text-center pt-2 pb-4">
+      <div className="relative z-20 w-full max-w-4xl mx-auto text-center pt-2 pb-2">
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white font-sans">
           Welcome back,{' '}
           <span className="bg-gradient-to-r from-violet-400 via-pink-400 to-amber-300 bg-clip-text text-transparent">
@@ -191,6 +193,17 @@ export const GreetingPage: React.FC<GreetingPageProps> = ({
           </span>
         </h1>
       </div>
+
+      {/* Intro Screen UntitledUI Update Checker (Live State Active) */}
+      {showUpdateNotification && (
+        <div className="relative z-30 w-full max-w-md mx-auto px-4 my-2">
+          <UpdateCheckerNotificationTemplate
+            isDarkMode={true}
+            onDismiss={() => setShowUpdateNotification(false)}
+            className="shadow-2xl border-white/10 bg-neutral-900/90"
+          />
+        </div>
+      )}
 
       {/* 4. Subsystems Verification Checklist (Moved further left & right to frame background logically) */}
       <main className="relative z-20 w-full max-w-[96vw] 2xl:max-w-[1600px] mx-auto flex-1 flex flex-col justify-center my-auto py-2 px-2 sm:px-6 lg:px-12 xl:px-16">
