@@ -155,3 +155,64 @@ class ApiKeyVault(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+# =====================================================================
+# Vector Search & Semantic Memory Models (pgvector + Gemini Embedding 2)
+# =====================================================================
+
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    Vector = lambda dim: Text  # Fallback to Text if pgvector is absent
+
+GEMINI_EMBEDDING_DIM = 3072
+
+
+class EpisodicMemoryModel(Base):
+    """
+    Episodic and long-term user memory embeddings for semantic recall.
+    Stores user preferences, project conventions, and feedback.
+    """
+    __tablename__ = "episodic_memories"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(String(36), primary_key=True, default=gen_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
+    category = Column(String(50), default="preference", index=True, nullable=False)
+    content = Column(Text, nullable=False)
+    embedding = Column(Vector(GEMINI_EMBEDDING_DIM), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class KnowledgeVaultChunkModel(Base):
+    """
+    Semantic knowledge vault vector chunks for documentation and project guides.
+    """
+    __tablename__ = "knowledge_vault_chunks"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(String(36), primary_key=True, default=gen_uuid)
+    source = Column(String(255), nullable=False)
+    category = Column(String(50), default="documentation", index=True, nullable=False)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    content_hash = Column(String(64), unique=True, index=True, nullable=False)
+    embedding = Column(Vector(GEMINI_EMBEDDING_DIM), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class ToolRegistryVectorModel(Base):
+    """
+    Tool selection RAG vectors for dynamic tool retrieval based on user intent.
+    """
+    __tablename__ = "tool_registry_vectors"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(String(36), primary_key=True, default=gen_uuid)
+    tool_name = Column(String(100), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=False)
+    schema_json = Column(JSON, default=dict, nullable=False)
+    embedding = Column(Vector(GEMINI_EMBEDDING_DIM), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

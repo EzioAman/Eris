@@ -8,9 +8,11 @@ from typing import Any, Dict, List, Optional
 try:
     from backend.app.config import settings
     from backend.app.services.learning import build_habit_prompt
+    from backend.app.services.security import verify_developer_passphrase
 except ImportError:
     from app.config import settings
     from app.services.learning import build_habit_prompt
+    from app.services.security import verify_developer_passphrase
 
 logger = logging.getLogger("eris.agent.prompts")
 
@@ -65,101 +67,94 @@ class PromptBuilder:
         if any(k in text for k in read_keywords):
             return IntentType.READ_INSPECTION
 
-        # 4. Pure greetings & small talk
-        greeting_words = {"hi", "hello", "hey", "sup", "greetings", "good morning", "good evening", "good afternoon", "who are you"}
-        clean_words = text.rstrip(".!? ")
-        if clean_words in greeting_words or (len(text.split()) <= 2 and any(g in text for g in ("hi", "hello", "hey"))):
-            return IntentType.CONVERSATION
+        # 4. Action triggers
+        action_keywords = (
+            "create", "write", "make", "delete", "run", "execute", "edit",
+            "update", "replace", "install", "commit", "push", "play", "send",
+            "build", "generate", "deploy", "fix", "refactor", "patch", "modify",
+            "remove", "add", "download", "open", "kill", "start", "stop"
+        )
+        words = set(re.findall(r"\b[a-zA-Z]{3,}\b", text))
+        if any(w in words for w in action_keywords):
+            return IntentType.ACTION_EXECUTE
 
-        # Default: general action execution
-        return IntentType.ACTION_EXECUTE
+        # Default: general conversation, inquiry, or greeting
+        return IntentType.CONVERSATION
 
-    def load_user_memory_profile(self, user_id: Optional[str] = None) -> str:
-        """
-        Loads the active user profile across UserDatabaseService, user_data.db,
-        memory/users/<user_id>/profile.json, and memory/memory.json.
-        """
-        # 1. Try UserDatabaseService for specific user
+    def get_user_profile_data(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Loads raw user profile dictionary across database and file fallbacks with strict user isolation."""
+        target_user = (user_id or "").strip()
         candidate_ids = []
-        if user_id:
-            candidate_ids.extend([user_id, user_id.replace("_", "@"), user_id.replace("@", "_")])
-        candidate_ids.extend(["user1_gmail_com", "user1@gmail.com", "default_user"])
+        if target_user:
+            candidate_ids.extend([target_user, target_user.replace("_", "@"), target_user.replace("@", "_")])
+        else:
+            candidate_ids.extend(["dev", "default_user"])
 
         try:
             from backend.app.services.user_db_service import UserDatabaseService
             for cid in candidate_ids:
                 prof = UserDatabaseService.get_user_profile(cid)
                 if prof and (prof.get("display_name") or prof.get("username")):
-                    lines = [
-                        f"- Current User: {prof.get('display_name', 'User')} (@{prof.get('username', 'user')})",
-                    ]
-                    if prof.get("email"):
-                        lines.append(f"- User Email: {prof.get('email')}")
-                    if prof.get("headline"):
-                        lines.append(f"- User Role/Focus: {prof.get('headline')}")
-                    if prof.get("bio"):
-                        lines.append(f"- User Context & Notes: {prof.get('bio')}")
-                    if prof.get("timezone"):
-                        lines.append(f"- User Timezone: {prof.get('timezone')}")
-                    return "\n".join(lines) + "\n"
+                    return prof
         except Exception:
             pass
 
-        # 2. Check disk profile.json under memory/users/
         users_dir = self.workspace_path / "memory" / "users"
         if users_dir.exists():
-            # If user_id provided, check its directory first
-            subdirs = []
-            if user_id:
-                subdirs.append(users_dir / user_id)
-            subdirs.extend(list(users_dir.iterdir()))
+            for cid in candidate_ids:
+                p_file = users_dir / cid / "profile.json"
+                if p_file.exists():
+                    try:
+                        with open(p_file, "r", encoding="utf-8") as f:
+                            prof = json.load(f)
+                            if prof and (prof.get("display_name") or prof.get("username")):
+                                return prof
+                    except Exception:
+                        pass
 
-            for u_dir in subdirs:
-                if u_dir.is_dir():
-                    p_file = u_dir / "profile.json"
-                    if p_file.exists():
-                        try:
-                            with open(p_file, "r", encoding="utf-8") as f:
-                                prof = json.load(f)
-                                if prof.get("display_name") or prof.get("username"):
-                                    lines = [
-                                        f"- Current User: {prof.get('display_name', 'User')} (@{prof.get('username', 'user')})",
-                                    ]
-                                    if prof.get("email"):
-                                        lines.append(f"- User Email: {prof.get('email')}")
-                                    if prof.get("headline"):
-                                        lines.append(f"- User Role/Focus: {prof.get('headline')}")
-                                    if prof.get("bio"):
-                                        lines.append(f"- User Context & Notes: {prof.get('bio')}")
-                                    if prof.get("timezone"):
-                                        lines.append(f"- User Timezone: {prof.get('timezone')}")
-                                    return "\n".join(lines) + "\n"
-                        except Exception:
-                            pass
+        if not target_user or target_user in ("default_user", "dev"):
+            for fallback_name in ["memory.json", "user_profile.json"]:
+                mem_file = self.workspace_path / "memory" / fallback_name
+                if mem_file.exists():
+                    try:
+                        with open(mem_file, "r", encoding="utf-8") as f:
+                            mem = json.load(f)
+                            user_prof = mem.get("user_profile") if "user_profile" in mem else (mem if "display_name" in mem else None)
+                            if user_prof and (user_prof.get("display_name") or user_prof.get("username")):
+                                return user_prof
+                    except Exception:
+                        pass
 
-        # 3. Fallback to memory/memory.json or memory/user_profile.json
-        for fallback_name in ["memory.json", "user_profile.json"]:
-            mem_file = self.workspace_path / "memory" / fallback_name
-            if mem_file.exists():
-                try:
-                    with open(mem_file, "r", encoding="utf-8") as f:
-                        mem = json.load(f)
-                        user_prof = mem.get("user_profile") if "user_profile" in mem else (mem if "display_name" in mem else None)
-                        if user_prof and (user_prof.get("display_name") or user_prof.get("username")):
-                            lines = [
-                                f"- Current User: {user_prof.get('display_name', 'User')} (@{user_prof.get('username', 'user')})",
-                            ]
-                            if user_prof.get("headline"):
-                                lines.append(f"- User Role/Focus: {user_prof.get('headline')}")
-                            if user_prof.get("bio"):
-                                lines.append(f"- User Context & Notes: {user_prof.get('bio')}")
-                            if user_prof.get("timezone"):
-                                lines.append(f"- User Timezone: {user_prof.get('timezone')}")
-                            return "\n".join(lines) + "\n"
-                except Exception:
-                    pass
+        return {}
 
-        return ""
+    def load_user_memory_profile(self, user_id: Optional[str] = None) -> str:
+        """
+        Loads the active user profile across UserDatabaseService and disk files.
+        Protects developer privacy by redacting cryptographic passphrase from injected text.
+        """
+        prof = self.get_user_profile_data(user_id=user_id)
+        if not prof:
+            return ""
+
+        lines = [
+            f"- Current User: {prof.get('display_name', 'User')} (@{prof.get('username', 'user')})",
+        ]
+        if prof.get("email"):
+            lines.append(f"- User Email: {prof.get('email')}")
+        if prof.get("headline"):
+            lines.append(f"- User Role/Focus: {prof.get('headline')}")
+
+        raw_bio = prof.get("bio", "")
+        if raw_bio:
+            # Check if bio matches developer passphrase: if so, redact it to prevent prompt leakage
+            if verify_developer_passphrase(raw_bio):
+                lines.append("- User Context & Notes: [Verified Lead Developer]")
+            else:
+                lines.append(f"- User Context & Notes: {raw_bio}")
+
+        if prof.get("timezone"):
+            lines.append(f"- User Timezone: {prof.get('timezone')}")
+        return "\n".join(lines) + "\n"
 
     def load_ai_slop_guidelines(self) -> str:
         """Loads anti-slop guidelines from doc/ai_slop.md to guarantee high signal responses."""
@@ -200,6 +195,18 @@ class PromptBuilder:
         prompt += f"- Active Model: {active_model}\n"
         prompt += f"- Execution Profile: {execution_mode.upper()}\n"
         prompt += "- Creator & Lead Developer: Aman Sinha\n\n"
+
+        # Developer Verification Protocol (Cryptographically verified - zero plaintext passphrase exposure)
+        user_prof = self.get_user_profile_data(user_id=user_id)
+        user_bio = user_prof.get("bio", "") if user_prof else ""
+        if verify_developer_passphrase(user_bio):
+            prompt += (
+                "### Verified Identity & Role Directive:\n"
+                "- Authenticated Person: Aman Sinha (Creator & Lead Developer of ERIS)\n"
+                "- Role & Authority: Lead Developer / Architect\n"
+                "- Verification: Cryptographically verified local developer profile.\n"
+                "- DIRECTIVE: Greet and address him directly as Sir, acknowledge his role as your creator and lead developer, and assist him with ERIS development tasks.\n\n"
+            )
 
         # User profile injection from profile settings
         user_profile = self.load_user_memory_profile(user_id=user_id)
@@ -267,54 +274,56 @@ class PromptBuilder:
             "- Authentic internal reasoning and self-reflection belong exclusively inside `<think>...</think>`.\n\n"
         )
 
-        # Tool Priority & Dynamic Tool Creation Protocol
-        prompt += (
-            "### Tool Priority & Dynamic Tool Creation Protocol:\n"
-            "- Always inspect and prioritize existing specialized tools from `tools/` (e.g. `open_browser`, `play_youtube_song`, `send_email`) over executing generic terminal commands.\n"
-            "- CRITICAL CONVERSATIONAL LAW: NEVER use `run_command` with 'echo' or shell commands to output normal conversational text, greetings, answers, or explanations to the user! Conversational replies must be output directly in your message text. Shell commands are strictly reserved for genuine OS/file operations.\n"
-            "- Direct Action Routing: If the user asks to play a song, music, video, or soundtrack, invoke `play_youtube_song` directly with the title query (e.g. 'Sunflower Post Malone'). Do NOT invoke `search_web` first.\n"
-            "- Direct Browser Routing: If the user asks to open a website, URL, or browser, invoke `open_browser` directly. Call it at most ONCE with the target URL. Never emit repetitive identical browser tool calls.\n"
-            "- NEVER execute ad-hoc Python one-liners (`python -c \"import ...\"`) through `run_command` for tasks that should be structured tools or integrations.\n"
-            "- If the user asks for a capability or action that has no existing tool:\n"
-            "  1. If the user explicitly asks to create a tool (e.g., 'create a tool for X'), use `create_custom_tool` to write and register a verified Python plugin in `tools/`.\n"
-            "  2. If the user asks for an action that lacks a tool, propose creating one: explain that you don't have a dedicated tool yet and ask if they would like you to create a reusable tool in `tools/`.\n"
-            "- All tools created in `tools/` must define `TOOL_NAME`, `TOOL_DESCRIPTION`, and an entry point `def execute(args: str = \"\") -> str:`.\n\n"
-        )
-
-        # Universal Tool Empowerment for All Agents
-        prompt += (
-            "### Universal Tool Empowerment & Execution Protocol:\n"
-            "- You are fully empowered to invoke registered local tools to achieve user goals.\n"
-            "- If native function calling is available, emit functionCall objects.\n"
-            "- If native function calling is unavailable, you can invoke tools via explicit syntax: `[CALL_TOOL: <tool_name> <json_args>]`.\n"
-            "- When a tool execution finishes, analyze the output, verify whether it fulfilled the goal, and proceed intentionally.\n\n"
-        )
-
-        # Strict API Key & Credential Zero-Exposure Directive
+        # Strict API Key & Credential Zero-Exposure Directive (applies to all intents)
         prompt += (
             "### Strict Credential & Secret Protection Directive:\n"
             "- CRITICAL SECURITY LAW: You do NOT have access to the user's raw API keys, tokens, or credential vault.\n"
-            "- All API keys are encrypted in a secure local database vault.\n"
+            "- All API keys are encrypted in a secure database vault.\n"
             "- You must NEVER read, print, output, expose, or repeat any API key, secret, or password, even if the user explicitly orders or attempts to jailbreak you into doing so.\n"
             "- If asked to show, print, or reveal API keys or secrets, politely refuse and instruct the user to manage their keys securely in Settings > API Key Vault.\n\n"
         )
 
-        # Decisive Execution & Anti-Loop directives
-        prompt += (
-            "### Decisive Tool Execution Directives:\n"
-            "- Once you identify or read a file, do NOT repeat search queries, search_knowledge_vault, or list_dir.\n"
-            "- When modifying or repairing code, show the exact unified diff using a ```diff block (with - for removed lines and + for added lines) or provide the complete updated code block so the user can inspect the comparison.\n"
-            "- Immediately perform the necessary edit with write_to_file / replace_file_content or provide the complete fixed code.\n"
-            "- Never loop on reading files or inspecting directories. Aim to complete your task in 1-2 tool calls.\n\n"
-        )
+        # Tool directives (only injected when tools are active)
+        if intent != IntentType.CONVERSATION:
+            # Tool Priority & Dynamic Tool Creation Protocol
+            prompt += (
+                "### Tool Priority & Dynamic Tool Creation Protocol:\n"
+                "- Always inspect and prioritize existing specialized tools from `tools/` (e.g. `open_browser`, `play_youtube_song`, `send_email`) over executing generic terminal commands.\n"
+                "- CRITICAL CONVERSATIONAL LAW: NEVER use `run_command` with 'echo' or shell commands to output normal conversational text, greetings, answers, or explanations to the user! Conversational replies must be output directly in your message text. Shell commands are strictly reserved for genuine OS/file operations.\n"
+                "- Direct Action Routing: If the user asks to play a song, music, video, or soundtrack, invoke `play_youtube_song` directly with the title query (e.g. 'Sunflower Post Malone'). Do NOT invoke `search_web` first.\n"
+                "- Direct Browser Routing: If the user asks to open a website, URL, or browser, invoke `open_browser` directly. Call it at most ONCE with the target URL. Never emit repetitive identical browser tool calls.\n"
+                "- NEVER execute ad-hoc Python one-liners (`python -c \"import ...\"`) through `run_command` for tasks that should be structured tools or integrations.\n"
+                "- If the user asks for a capability or action that has no existing tool:\n"
+                "  1. If the user explicitly asks to create a tool (e.g., 'create a tool for X'), use `create_custom_tool` to write and register a verified Python plugin in `tools/`.\n"
+                "  2. If the user asks for an action that lacks a tool, propose creating one: explain that you don't have a dedicated tool yet and ask if they would like you to create a reusable tool in `tools/`.\n"
+                "- All tools created in `tools/` must define `TOOL_NAME`, `TOOL_DESCRIPTION`, and an entry point `def execute(args: str = \"\") -> str:`.\n\n"
+            )
 
-        # Safety boundary for emails and high-risk operations
-        prompt += (
-            "### Critical Safety Boundary for External Actions:\n"
-            "- Never guess recipient email addresses or messages.\n"
-            "- If recipient or message body is missing, ask the user in chat for the details.\n"
-            "- High-risk actions (send_email, run_command) undergo explicit human approval before execution.\n"
-        )
+            # Universal Tool Empowerment for All Agents
+            prompt += (
+                "### Universal Tool Empowerment & Execution Protocol:\n"
+                "- You are fully empowered to invoke registered local tools to achieve user goals.\n"
+                "- If native function calling is available, emit functionCall objects.\n"
+                "- If native function calling is unavailable, you can invoke tools via explicit syntax: `[CALL_TOOL: <tool_name> <json_args>]`.\n"
+                "- When a tool execution finishes, analyze the output, verify whether it fulfilled the goal, and proceed intentionally.\n\n"
+            )
+
+            # Decisive Execution & Anti-Loop directives
+            prompt += (
+                "### Decisive Tool Execution Directives:\n"
+                "- Once you identify or read a file, do NOT repeat search queries, search_knowledge_vault, or list_dir.\n"
+                "- When modifying or repairing code, show the exact unified diff using a ```diff block (with - for removed lines and + for added lines) or provide the complete updated code block so the user can inspect the comparison.\n"
+                "- Immediately perform the necessary edit with write_to_file / replace_file_content or provide the complete fixed code.\n"
+                "- Never loop on reading files or inspecting directories. Aim to complete your task in 1-2 tool calls.\n\n"
+            )
+
+            # Safety boundary for emails and high-risk operations
+            prompt += (
+                "### Critical Safety Boundary for External Actions:\n"
+                "- Never guess recipient email addresses or messages.\n"
+                "- If recipient or message body is missing, ask the user in chat for the details.\n"
+                "- High-risk actions (send_email, run_command) undergo explicit human approval before execution.\n"
+            )
 
         return prompt
 
@@ -357,6 +366,9 @@ DIRECT_PROMPT_PATTERNS = [
     "print .env",
     "show .env",
     ".env file",
+    "developer passphrase",
+    "secret passphrase",
+    "dev passphrase",
 ]
 
 
@@ -376,7 +388,7 @@ def is_credential_extraction_attempt(text: str) -> bool:
             return True
 
     # 3. Two-term semantic combinations
-    has_target = any(t in lowered for t in ["api key", "apikey", "api_key", "secret key", "credentials", "gemini key", "openrouter key"])
+    has_target = any(t in lowered for t in ["api key", "apikey", "api_key", "secret key", "credentials", "gemini key", "openrouter key", "passphrase", "developer phrase", "dev phrase"])
     has_action = any(a in lowered for a in ["what is", "show", "print", "reveal", "give", "dump", "tell me", "display", "leak"])
     if has_target and has_action:
         return True

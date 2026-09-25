@@ -493,6 +493,35 @@ class ToolRegistry:
         except Exception as ex:
             return f"Error executing tool '{name}': {ex}"
 
+    def get_relevant_tools(self, query: str = "", top_k: int = 8) -> List[StructuredTool]:
+        """
+        Fast in-memory tool selection:
+        Always preserves baseline inspection tools (read_file, view_file, grep_search, list_dir),
+        and ranks remaining workspace tools via in-memory lexical keyword overlap (0.1 ms, 0 API calls).
+        """
+        self.initialize()
+        all_lc_tools = self.get_langchain_tools()
+        if len(all_lc_tools) <= top_k or not query or not query.strip():
+            return all_lc_tools
+
+        always_included = {"read_file", "view_file", "grep_search", "list_dir"}
+        q_tokens = set(re.findall(r"\b[a-zA-Z0-9_\-]{2,}\b", query.lower()))
+
+        scored_tools = []
+        for t in all_lc_tools:
+            if t.name in always_included:
+                continue
+            desc_tokens = set(re.findall(r"\b[a-zA-Z0-9_\-]{2,}\b", (t.name + " " + (t.description or "")).lower()))
+            overlap = len(q_tokens.intersection(desc_tokens))
+            scored_tools.append((overlap, t))
+
+        scored_tools.sort(key=lambda x: x[0], reverse=True)
+        remaining_slots = max(0, top_k - len(always_included))
+        top_extra = [t for _, t in scored_tools[:remaining_slots]]
+
+        included_names = always_included.union(t.name for t in top_extra)
+        return [t for t in all_lc_tools if t.name in included_names]
+
 
 # Global tool registry instance
 registry = ToolRegistry()
@@ -508,6 +537,11 @@ def get_langchain_tools() -> List[StructuredTool]:
     return registry.get_langchain_tools()
 
 
+def get_relevant_tools(query: str = "", top_k: int = 8) -> List[StructuredTool]:
+    """Helper function for Dynamic Tool Selection RAG."""
+    return registry.get_relevant_tools(query=query, top_k=top_k)
+
+
 def get_tool_by_name(name: str) -> Optional[ToolDefinition]:
     """Helper function to retrieve a specific tool definition."""
     return registry.get_tool_by_name(name)
@@ -521,3 +555,4 @@ def check_if_approval_needed(tool_name: str, args: Dict[str, Any], user_habits: 
 def execute_tool(name: str, args: Dict[str, Any]) -> str:
     """Helper function to execute a tool."""
     return registry.execute_tool(name, args)
+

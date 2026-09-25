@@ -41,6 +41,7 @@ const PROVIDERS = [
   { id: 'openai', name: 'OpenAI', defaultModel: 'openai/gpt-4o', placeholder: 'sk-proj-...', defaultBaseUrl: 'https://api.openai.com/v1' },
   { id: 'anthropic', name: 'Anthropic', defaultModel: 'anthropic/claude-3-5-sonnet', placeholder: 'sk-ant-...', defaultBaseUrl: 'https://api.anthropic.com/v1' },
   { id: 'deepseek', name: 'DeepSeek', defaultModel: 'deepseek/deepseek-chat', placeholder: 'sk-...', defaultBaseUrl: 'https://api.deepseek.com/v1' },
+  { id: 'nvidia', name: 'Nvidia NIM', defaultModel: 'nvidia/meta/llama-3.3-70b-instruct', placeholder: 'nvapi-...', defaultBaseUrl: 'https://integrate.api.nvidia.com/v1' },
   { id: 'ollama', name: 'Ollama (Local)', defaultModel: 'ollama/llama3.2', placeholder: 'ollama-local', defaultBaseUrl: 'http://localhost:11434/v1' },
   { id: 'custom', name: 'Custom OpenAI-Compatible', defaultModel: '', placeholder: 'Bearer key...', defaultBaseUrl: 'http://localhost:8000/v1' },
 ];

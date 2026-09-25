@@ -1,1 +1,0 @@
-# Eris - Permanent Developer Directives`n`n- **Proactive Constraint Transparency:** Always inform the user immediately about any path or permission restrictions before attempting file writes or restricted operations.

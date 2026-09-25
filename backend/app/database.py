@@ -57,8 +57,15 @@ class DatabaseManager:
             autoflush=False
         )
 
-        # 4. Auto-generate tables
+        # 4. Auto-generate tables & enable extensions
         async with self.engine.begin() as conn:
+            if self.active_db_type == "postgresql":
+                try:
+                    await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                    logger.info("PostgreSQL pgvector extension verified.")
+                except Exception as ext_err:
+                    logger.warning(f"pgvector extension notice (will continue if already enabled): {ext_err}")
+
             try:
                 await conn.run_sync(Base.metadata.create_all)
             except Exception as ddl_err:

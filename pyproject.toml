@@ -28,7 +28,6 @@ dependencies = [
     "langchain-openai>=1.6.4",
     "langchain>=1.4.2",
     "pyinstaller>=6.22.3",
-    "pywhatkit>=5.4",
     "litellm>=1.102.1",
     "langchain-core>=1.6.4",
     "pydantic>=2.13.5",
@@ -36,8 +35,6 @@ dependencies = [
     "tiktoken>=0.14.0",
     "pytest>=9.1.1",
     "tzdata>=2026.4",
-    "sql>=2022.4.0",
-    "mysql>=0.0.3",
     "urllib3>=2.7.0",
     "setuptools>=84.0.0",
     "importlib-metadata>=8.9.0",
@@ -47,7 +44,8 @@ dependencies = [
     "anyio>=4.15.1",
     "google-genai>=2.25.0",
     "tomli>=2.4.1",
-    "wheeel>=0.0.2",
+    "pgvector>=0.5.0",
+    "fastembed>=0.8.1",
 ]
 
 [tool.uv]

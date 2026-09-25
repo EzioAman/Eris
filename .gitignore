@@ -28,3 +28,9 @@ scratch/
 PRD.md
 This is Eris.md
 Aman_Note.md
+*.patch
+*.diff
+backup/
+_backup/
+
+

@@ -806,6 +806,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         const accumulatedThoughts: string[] = [];
         const accumulatedSwitches: string[] = [];
         const accumulatedSearches: any[] = [];
+        let hasStreamedChunks = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -906,6 +907,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                     }
                     : null
                 );
+              } else if (ev.type === 'chunk' || ev.type === 'token') {
+                if (ev.text) {
+                  hasStreamedChunks = true;
+                  setStreamingText((prev) => prev + ev.text);
+                }
               } else if (ev.type === 'done') {
                 donePayload = ev;
                 if (ev.usage) {
@@ -1256,6 +1262,42 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             title: isWebSearch ? `Web Browser: ${text}` : cleanUrl,
             readerContent: finalReply,
           };
+        }
+
+        if (hasStreamedChunks) {
+          setIsStreaming(false);
+          setStreamingText('');
+          const finalReasoning =
+            donePayload?.reasoning ||
+            (accumulatedThoughts.length > 0 ? accumulatedThoughts.join('\n\n') : undefined);
+          const finalReasoningSteps =
+            donePayload?.reasoningSteps ||
+            (accumulatedThoughts.length > 0
+              ? accumulatedThoughts.map((t, idx) => ({ turn: idx + 1, thought: t }))
+              : undefined);
+
+          const assistantMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            text: finalReply,
+            activeModel: donePayload?.model || activeModel,
+            reasoning: finalReasoning,
+            reasoningSteps: finalReasoningSteps,
+            searches: donePayload?.searches || (accumulatedSearches.length > 0 ? accumulatedSearches : undefined),
+            sources: donePayload?.sources,
+            switches: donePayload?.switches || (accumulatedSwitches.length > 0 ? accumulatedSwitches : undefined),
+            thoughtDuration: durationSec,
+            timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+            tools: assistantTools.length > 0 ? assistantTools : undefined,
+            templateType,
+            templateData,
+          };
+          setMessages((prev) => {
+            const next = [...prev, assistantMsg];
+            setConversations((c) => ({ ...c, [activeChatId]: next }));
+            return next;
+          });
+          return;
         }
 
         // Stream tokens smoothly to output with pure slice indexing (immune to React StrictMode updater duplication)

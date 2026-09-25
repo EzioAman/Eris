@@ -221,6 +221,13 @@ def get_active_decrypted_key_sync(provider: str) -> Optional[str]:
             return decrypt_secret(row[0])
     except Exception as ex:
         logger.debug(f"Sync vault retrieval failed for provider {provider}: {ex}")
+
+    # Fallback to environment variables
+    p_lower = provider.lower().strip()
+    if p_lower == "gemini" and getattr(settings, "GEMINI_API_KEY", ""):
+        return settings.GEMINI_API_KEY.strip()
+    if p_lower == "openrouter" and getattr(settings, "OPENROUTER_API_KEY", ""):
+        return settings.OPENROUTER_API_KEY.strip()
     return None
 
 
@@ -231,31 +238,50 @@ def get_all_active_credentials_sync() -> List[Dict[str, Any]]:
     """
     import sqlite3
     db_path = settings.MEMORY_DIR / "auth.db"
-    if not db_path.exists():
-        return []
     results = []
-    try:
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT provider, key_ciphertext, base_url, model_name, label FROM api_key_vault WHERE is_active = 1 ORDER BY created_at DESC"
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        for r in rows:
-            try:
-                decrypted = decrypt_secret(r[1])
-                results.append({
-                    "provider": r[0],
-                    "key": decrypted,
-                    "base_url": r[2] or "",
-                    "model_name": r[3] or "",
-                    "label": r[4] or ""
-                })
-            except Exception:
-                pass
-    except Exception as ex:
-        logger.debug(f"Sync vault retrieval failed: {ex}")
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT provider, key_ciphertext, base_url, model_name, label FROM api_key_vault WHERE is_active = 1 ORDER BY created_at DESC"
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            for r in rows:
+                try:
+                    decrypted = decrypt_secret(r[1])
+                    results.append({
+                        "provider": r[0],
+                        "key": decrypted,
+                        "base_url": r[2] or "",
+                        "model_name": r[3] or "",
+                        "label": r[4] or ""
+                    })
+                except Exception:
+                    pass
+        except Exception as ex:
+            logger.debug(f"Sync vault retrieval failed: {ex}")
+
+    # Resilient fallback: include keys from environment if not already in results
+    existing_providers = {r["provider"].lower().strip() for r in results}
+    if "gemini" not in existing_providers and getattr(settings, "GEMINI_API_KEY", ""):
+        results.append({
+            "provider": "gemini",
+            "key": settings.GEMINI_API_KEY.strip(),
+            "base_url": "",
+            "model_name": "gemini-2.0-flash",
+            "label": "Environment GEMINI_API_KEY",
+        })
+    if "openrouter" not in existing_providers and getattr(settings, "OPENROUTER_API_KEY", ""):
+        results.append({
+            "provider": "openrouter",
+            "key": settings.OPENROUTER_API_KEY.strip(),
+            "base_url": "",
+            "model_name": "openrouter/auto",
+            "label": "Environment OPENROUTER_API_KEY",
+        })
+
     return results
 
 
@@ -283,22 +309,6 @@ async def get_dynamic_vault_fallbacks(
             full_model = configured_model if configured_model.startswith(f"{prov}/") else f"{prov}/{configured_model}"
             if full_model != clean_active and full_model not in candidates:
                 candidates.append(full_model)
-        else:
-            default_map = {
-                "openrouter": "openrouter/openrouter/auto",
-                "gemini": "gemini/gemini-flash-latest",
-                "groq": "groq/llama-3.3-70b-versatile",
-            }
-            cand = default_map.get(prov)
-            if cand and cand != clean_active and cand not in candidates:
-                candidates.append(cand)
-
-    # If OpenRouter is an active provider in vault, ensure auto-routing is available as safety net
-    has_openrouter = any(k.get("provider", "").lower() == "openrouter" and k.get("is_active") for k in active_keys)
-    if has_openrouter:
-        for fallback_or in ["openrouter/openrouter/auto", "openrouter/meta-llama/llama-3.3-70b-instruct"]:
-            if fallback_or != clean_active and fallback_or not in candidates:
-                candidates.append(fallback_or)
 
     return candidates
 

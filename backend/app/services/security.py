@@ -32,3 +32,19 @@ def hash_otp(code: str) -> str:
 def verify_otp_hash(plain_code: str, stored_hash: str) -> bool:
     computed = hash_otp(plain_code)
     return hmac.compare_digest(computed, stored_hash)
+
+# Cryptographic developer passphrase hash ("ben 10 is scared of peacocks")
+# Stored as SHA-256 digest to prevent plaintext exposure in prompt injection / leakage attacks
+DEV_PASSPHRASE_SHA256 = "39c40950a2696013a308967c1acbd49e3a09c02a5474deed07555dd04d5b13bc"
+
+def verify_developer_passphrase(text: str = "") -> bool:
+    """
+    Verifies if a candidate text matches the developer passphrase via constant-time comparison.
+    Normalizes whitespace and case to ensure deterministic verification.
+    """
+    if not text:
+        return False
+    normalized = " ".join(str(text).strip().lower().split())
+    computed_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(computed_hash, DEV_PASSPHRASE_SHA256)
+

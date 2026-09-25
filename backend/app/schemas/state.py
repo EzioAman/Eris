@@ -20,3 +20,4 @@ class AgentState(TypedDict):
     executed_tools: List[Dict[str, Any]]
     token_usage: Optional[Dict[str, int]]
     user_id: Optional[str]
+    sub_timings: Optional[Dict[str, float]]

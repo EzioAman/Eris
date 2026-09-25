@@ -1,13 +1,17 @@
+import asyncio
 import json
 import logging
 import os
+import random
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
     AIMessage,
+    AIMessageChunk,
     HumanMessage,
     SystemMessage,
     ToolMessage,
@@ -24,6 +28,34 @@ except ImportError:
     from backend.app.services.vault_service import get_active_credentials_for_provider
 
 logger = logging.getLogger("eris.agent.llm_client")
+
+
+def is_quota_exhaustion_error(error: Exception) -> bool:
+    """
+    Identifies hard quota limits, rate limit exhaustion, 404 deprecated models, and HTTP 429 codes.
+    When True, retries are skipped and the agent fails over immediately.
+    """
+    err_str = str(error).lower()
+    status_code = getattr(error, "status_code", None) or getattr(error, "code", None)
+    if status_code in (429, "429", "RESOURCE_EXHAUSTED", 404, "404"):
+        return True
+    exhaustion_keywords = (
+        "429",
+        "resource_exhausted",
+        "resourceexhausted",
+        "quota",
+        "rate limit",
+        "ratelimit",
+        "too many requests",
+        "exceeded your current quota",
+        "insufficient_quota",
+        "tokens per minute",
+        "requests per day",
+        "no longer available",
+        "not found",
+        "not_found",
+    )
+    return any(k in err_str for k in exhaustion_keywords)
 
 
 class FunctionCallWrapper:
@@ -52,21 +84,27 @@ class ChoiceWrapper:
 
 
 class LLMResponse:
-    """Normalized response matching standard completion choice structure."""
+    """Normalized response matching standard completion choice structure with latency metadata."""
     def __init__(
         self,
         content: str = "",
         tool_calls: Optional[List[ToolCallWrapper]] = None,
         usage: Optional[Dict[str, int]] = None,
         model: Optional[str] = None,
+        ttft_ms: Optional[float] = None,
+        prompt_chars: int = 0,
+        tool_schema_chars: int = 0,
     ):
         self.choices = [ChoiceWrapper(MessageWrapper(content=content, tool_calls=tool_calls))]
         self.usage = usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.model = model
+        self.ttft_ms = ttft_ms
+        self.prompt_chars = prompt_chars
+        self.tool_schema_chars = tool_schema_chars
 
 
 def _infer_provider(model_name: str) -> tuple[str, str]:
-    """Infers provider and stripped model name."""
+    """Infers provider and stripped model name across all supported backends."""
     clean = model_name.strip()
     if clean.startswith("gemini/") or "gemini" in clean.lower():
         sub_name = clean.replace("gemini/", "")
@@ -82,13 +120,20 @@ def _infer_provider(model_name: str) -> tuple[str, str]:
         return "ollama", clean.replace("ollama/", "")
     elif clean.startswith("openai/"):
         return "openai", clean.replace("openai/", "")
+    elif clean.startswith("nvidia/") or clean.startswith("nvidia_nim/"):
+        sub = clean.split("/", 1)[1] if "/" in clean else clean
+        return "nvidia", sub
+    elif clean.startswith("anthropic/"):
+        return "anthropic", clean.replace("anthropic/", "")
+    elif clean.startswith("deepseek/"):
+        return "deepseek", clean.replace("deepseek/", "")
     return "openrouter", clean
 
 
 async def _resolve_api_key(provider: str, model_name: str) -> tuple[str, str]:
     """
-    Fetches active credentials for provider STRICTLY from the local encrypted SQLite database vault.
-    ERIS will never read or import LLM keys from the .env file.
+    Fetches active credentials for provider from the local encrypted vault,
+    with automatic fallback to environment settings if vault is uninitialized.
     """
     api_key = ""
     base_url = ""
@@ -104,6 +149,24 @@ async def _resolve_api_key(provider: str, model_name: str) -> tuple[str, str]:
     except Exception as ex:
         logger.warning(f"Could not read from API key vault: {ex}")
 
+    if not api_key:
+        p_lower = provider.lower().strip()
+        env_map = {
+            "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+            "openrouter": ["OPENROUTER_API_KEY"],
+            "openai": ["OPENAI_API_KEY"],
+            "groq": ["GROQ_API_KEY"],
+            "nvidia": ["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"],
+            "nvidia_nim": ["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"],
+            "anthropic": ["ANTHROPIC_API_KEY"],
+            "deepseek": ["DEEPSEEK_API_KEY"],
+        }
+        for env_var in env_map.get(p_lower, []):
+            val = getattr(settings, env_var, None) or os.getenv(env_var, "")
+            if val and val.strip():
+                api_key = val.strip()
+                break
+
     return api_key, base_url
 
 
@@ -112,11 +175,14 @@ def get_chat_model(
     api_key: str,
     base_url: Optional[str] = None,
     temperature: float = 0.2,
-    max_tokens: int = 2000,
+    max_tokens: int = 4096,
     timeout: Optional[float] = None,
 ):
     """
     Factory creating native LangChain ChatModel instances configured with vault credentials.
+    Passes max_retries=0 to underlying client so that ERIS's outer acompletion loop explicitly
+    controls retry behavior: retrying transient errors up to 2 times, and failing fast (0 retries)
+    only when quota/rate-limit exhaustion is encountered.
     """
     provider, sub_name = _infer_provider(model_name)
     eff_timeout = timeout if timeout is not None else 25.0
@@ -128,17 +194,21 @@ def get_chat_model(
             temperature=temperature,
             max_output_tokens=max_tokens,
             timeout=eff_timeout,
-            max_retries=2,
+            max_retries=0,
         )
     else:
         resolved_base = base_url
         if not resolved_base:
-            if provider == "openrouter":
-                resolved_base = "https://openrouter.ai/api/v1"
-            elif provider == "groq":
-                resolved_base = "https://api.groq.com/openai/v1"
-            elif provider == "ollama":
-                resolved_base = "http://127.0.0.1:11434/v1"
+            base_url_map = {
+                "openrouter": "https://openrouter.ai/api/v1",
+                "groq": "https://api.groq.com/openai/v1",
+                "ollama": "http://127.0.0.1:11434/v1",
+                "nvidia": "https://integrate.api.nvidia.com/v1",
+                "nvidia_nim": "https://integrate.api.nvidia.com/v1",
+                "openai": "https://api.openai.com/v1",
+                "deepseek": "https://api.deepseek.com/v1",
+            }
+            resolved_base = base_url_map.get(provider)
 
         return ChatOpenAI(
             model=sub_name,
@@ -147,7 +217,7 @@ def get_chat_model(
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=eff_timeout,
-            max_retries=2,
+            max_retries=0,
         )
 
 
@@ -156,7 +226,7 @@ async def acompletion(
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]] = None,
     temperature: float = 0.2,
-    max_tokens: int = 2000,
+    max_tokens: int = 4096,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout: Optional[float] = None,
@@ -164,8 +234,8 @@ async def acompletion(
 ) -> LLMResponse:
     """
     Executes a model completion turn via official LangChain model wrappers.
-    Translates input messages to LangChain objects, executes tool-bound model call,
-    and returns normalized LLMResponse.
+    Streams chunks progressively, with intelligent retry for transient errors
+    and instant fail-fast on quota/rate-limit exhaustion.
     """
     provider, sub_model = _infer_provider(model)
     resolved_api_key = api_key
@@ -225,7 +295,79 @@ async def acompletion(
     else:
         model_runnable = chat_model
 
-    ai_msg: AIMessage = await model_runnable.ainvoke(lc_messages)
+    # Telemetry & LangSmith trace metadata profiling
+    prompt_chars = sum(len(str(getattr(m, "content", ""))) for m in lc_messages)
+    tool_schema_chars = len(json.dumps(tools)) if tools else 0
+    trace_metadata = kwargs.get("trace_metadata") or {}
+    trace_tags = kwargs.get("trace_tags") or [f"provider:{provider}", f"model:{sub_model}"]
+
+    run_meta = {
+        "provider": provider,
+        "model": sub_model,
+        "prompt_chars": prompt_chars,
+        "message_count": len(lc_messages),
+        "tool_count": len(tools or []),
+        "tool_schema_chars": tool_schema_chars,
+    }
+    run_meta.update(trace_metadata)
+
+    run_config = {
+        "metadata": run_meta,
+        "tags": trace_tags,
+        "run_name": f"llm_{provider}_{sub_model}",
+    }
+
+    # Execute with intelligent retry & instant quota exhaustion fail-fast
+    max_retries = 2
+    ai_msg: Optional[AIMessage] = None
+    last_ex: Optional[Exception] = None
+    ttft_ms: Optional[float] = None
+
+    for attempt in range(1, max_retries + 2):
+        try:
+            combined_msg: Optional[AIMessageChunk] = None
+            first_chunk_at: Optional[float] = None
+            stream_start = time.perf_counter()
+
+            async for chunk in model_runnable.astream(lc_messages, config=run_config):
+                if first_chunk_at is None and (getattr(chunk, "content", None) or getattr(chunk, "tool_call_chunks", None)):
+                    first_chunk_at = time.perf_counter()
+                if combined_msg is None:
+                    combined_msg = chunk
+                else:
+                    combined_msg = combined_msg + chunk
+
+            if first_chunk_at is not None:
+                ttft_ms = round((first_chunk_at - stream_start) * 1000.0, 2)
+            else:
+                ttft_ms = round((time.perf_counter() - stream_start) * 1000.0, 2)
+
+            ai_msg = combined_msg or AIMessage(content="")
+            break
+        except Exception as ex:
+            last_ex = ex
+            # 1. Condition: If quota/rate limit exhaustion is returned, fail fast immediately
+            if is_quota_exhaustion_error(ex):
+                logger.warning(
+                    f"Model '{model}' returned quota exhaustion / 429 ({ex}). "
+                    f"Failing fast to dynamic vault fallback without retry delay."
+                )
+                raise ex
+
+            # 2. Transient error: retry with exponential backoff & jitter
+            if attempt <= max_retries:
+                backoff = 0.5 * (2 ** (attempt - 1)) + random.uniform(0.1, 0.3)
+                logger.info(
+                    f"Model '{model}' encountered transient error ({ex}). "
+                    f"Retrying attempt {attempt}/{max_retries} in {backoff:.2f}s..."
+                )
+                await asyncio.sleep(backoff)
+            else:
+                logger.warning(f"Model '{model}' failed after {max_retries} retries: {ex}")
+                raise ex
+
+    if ai_msg is None:
+        raise last_ex or RuntimeError(f"Model '{model}' execution yielded no message.")
 
     # Extract parsed tool calls
     parsed_tool_calls: List[ToolCallWrapper] = []
@@ -281,4 +423,7 @@ async def acompletion(
         tool_calls=parsed_tool_calls,
         usage=token_usage,
         model=model,
+        ttft_ms=ttft_ms,
+        prompt_chars=prompt_chars,
+        tool_schema_chars=tool_schema_chars,
     )

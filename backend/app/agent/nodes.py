@@ -1,13 +1,15 @@
+import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.types import interrupt
 
 try:
-    from app.agent.llm_client import acompletion
+    from app.agent.llm_client import acompletion, _infer_provider, _resolve_api_key
     from app.agent.prompts import (
         IntentType,
         build_system_prompt,
@@ -15,7 +17,7 @@ try:
         is_credential_extraction_attempt,
         scrub_sensitive_credentials,
     )
-    from app.agent.registry import check_if_approval_needed, execute_tool, get_all_tools, get_langchain_tools, get_tool_by_name
+    from app.agent.registry import check_if_approval_needed, execute_tool, get_all_tools, get_langchain_tools, get_relevant_tools, get_tool_by_name
     from app.schemas.state import AgentState
     from app.schemas.tools import RiskLevel
     from app.services.learning import record_decision
@@ -23,7 +25,7 @@ try:
     from app.services.vault_service import get_dynamic_vault_fallbacks
     from app.database import db_manager
 except ImportError:
-    from backend.app.agent.llm_client import acompletion
+    from backend.app.agent.llm_client import acompletion, _infer_provider, _resolve_api_key
     from backend.app.agent.prompts import (
         IntentType,
         build_system_prompt,
@@ -31,7 +33,7 @@ except ImportError:
         is_credential_extraction_attempt,
         scrub_sensitive_credentials,
     )
-    from backend.app.agent.registry import check_if_approval_needed, execute_tool, get_all_tools, get_langchain_tools, get_tool_by_name
+    from backend.app.agent.registry import check_if_approval_needed, execute_tool, get_all_tools, get_langchain_tools, get_relevant_tools, get_tool_by_name
     from backend.app.schemas.state import AgentState
     from backend.app.schemas.tools import RiskLevel
     from backend.app.services.learning import record_decision
@@ -250,9 +252,13 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
 
     intent = classify_intent(last_human_text) if last_human_text else IntentType.CONVERSATION
 
-    # Prepare tools and OpenAI function calling schemas
-    lc_tools = get_langchain_tools()
-    tool_schemas = [convert_to_openai_tool(t) for t in lc_tools]
+    # Prepare tools dynamically via fast in-memory ranking
+    if intent == IntentType.CONVERSATION:
+        lc_tools = []
+        tool_schemas = []
+    else:
+        lc_tools = get_relevant_tools(query=last_human_text, top_k=8)
+        tool_schemas = [convert_to_openai_tool(t) for t in lc_tools]
 
     # For read/inspection queries, restrict tools strictly to read operations (never run_command)
     if intent == IntentType.READ_INSPECTION:
@@ -276,9 +282,12 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
     turn_count = state.get("turn_count", 1)
 
     # Prevent repetitive search/read loops:
-    # 1. Pure read/inspection queries finish once file is in context
-    # 2. Action queries can edit/write, but cannot repeat search/list_dir/read loops
-    if intent == IntentType.READ_INSPECTION and (read_file_count >= 1 or turn_count >= 3):
+    # 1. Conversational queries don't bind tools (saves ~550 ms at cloud provider)
+    # 2. Pure read/inspection queries finish once file is in context
+    # 3. Action queries can edit/write, but cannot repeat search/list_dir/read loops
+    if intent == IntentType.CONVERSATION:
+        tools_to_pass = None
+    elif intent == IntentType.READ_INSPECTION and (read_file_count >= 1 or turn_count >= 3):
         tools_to_pass = None
     elif turn_count >= 5 or read_file_count >= 3:
         tools_to_pass = None
@@ -290,14 +299,49 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
     else:
         tools_to_pass = tool_schemas if tool_schemas else None
 
-    # Convert all active tools for system prompt injection
-    all_tools_dict = get_all_tools()
-    registered_tools_list = [
-        {"name": t.name, "description": t.description, "source": t.source, "risk_level": t.risk_level.value}
-        for t in all_tools_dict.values()
-    ]
+    # Convert active tools for system prompt injection - prune to zero for conversational intent to save 2,000+ chars
+    if intent == IntentType.CONVERSATION:
+        registered_tools_list = []
+    else:
+        registered_tools_list = [
+            {"name": t.name, "description": t.description, "source": t.source, "risk_level": t.risk_level.value}
+            for t in lc_tools
+        ]
 
     user_id = state.get("user_id")
+
+    # Parallel pre-processing: RAG pre-retrieval and credential vault resolution
+    pre_prep_start = time.perf_counter()
+    provider, sub_model = _infer_provider(active_model)
+
+    should_run_rag = (
+        intent in (IntentType.READ_INSPECTION, IntentType.ACTION_EXECUTE, IntentType.WORKFLOW_ORCHESTRATION, IntentType.MULTI_AGENT_SWARM)
+        and last_human_text
+        and len(last_human_text.strip()) > 3
+    )
+
+    async def _fetch_rag() -> str:
+        if not should_run_rag:
+            return ""
+        try:
+            return await asyncio.to_thread(rag_vault.search_rag_context, last_human_text, 2)
+        except Exception as e:
+            logger.debug(f"RAG pre-retrieval skipped: {e}")
+            return ""
+
+    async def _fetch_creds() -> tuple[str, str]:
+        try:
+            return await _resolve_api_key(provider, sub_model)
+        except Exception as e:
+            logger.debug(f"Credential resolve notice: {e}")
+            return "", ""
+
+    rag_gather_start = time.perf_counter()
+    rag_context, (resolved_api_key, resolved_base_url) = await asyncio.gather(
+        _fetch_rag(),
+        _fetch_creds(),
+    )
+    rag_duration_ms = round((time.perf_counter() - rag_gather_start) * 1000.0, 2)
 
     # Build system prompt with learned habits, active tools, anti-slop guidelines, and user profile
     sys_prompt = build_system_prompt(
@@ -309,14 +353,8 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
         user_id=user_id,
     )
 
-    # 2. Agentic RAG Pre-Retrieval: inject verified project knowledge & documentation
-    if last_human_text and len(last_human_text.strip()) > 3:
-        try:
-            rag_context = rag_vault.search_rag_context(last_human_text, top_k=2)
-            if rag_context:
-                sys_prompt += f"\n\n---\n{rag_context}\n---"
-        except Exception as e:
-            logger.debug(f"RAG pre-retrieval skipped: {e}")
+    if rag_context:
+        sys_prompt += f"\n\n---\n{rag_context}\n---"
 
     llm_messages = _convert_messages_for_llm(sys_prompt, messages)
 
@@ -327,21 +365,38 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
             "content": "You have received the file contents in the tool response above. Provide your complete, detailed, structured analysis, review, or solution now."
         })
 
+    prompt_prep_ms = round((time.perf_counter() - pre_prep_start) * 1000.0, 2)
+
+    trace_metadata = {
+        "user_id": user_id,
+        "execution_mode": execution_mode,
+        "intent": intent.value if hasattr(intent, "value") else str(intent),
+        "prompt_prep_ms": prompt_prep_ms,
+        "rag_retrieval_ms": rag_duration_ms,
+        "tool_count": len(tools_to_pass or []),
+    }
+
     response = None
     used_model = active_model
     fallback_occurred = False
     last_error: Optional[Exception] = None
     primary_error: Optional[Exception] = None
 
+    llm_start = time.perf_counter()
     try:
         response = await acompletion(
             model=active_model,
             messages=llm_messages,
             tools=tools_to_pass,
             temperature=0.2 if execution_mode == "speed" else 0.4,
-            max_tokens=2000,
+            max_tokens=4096,
+            api_key=resolved_api_key,
+            base_url=resolved_base_url,
+            trace_metadata=trace_metadata,
         )
+        llm_duration_ms = round((time.perf_counter() - llm_start) * 1000.0, 2)
     except Exception as ex:
+        llm_duration_ms = round((time.perf_counter() - llm_start) * 1000.0, 2)
         primary_error = ex
         last_error = ex
         logger.warning(f"Active model '{active_model}' failed: {ex}. Searching dynamic vault fallbacks...")
@@ -358,13 +413,18 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
 
         for cand_model in dynamic_fallbacks:
             logger.info(f"Attempting dynamic vault fallback model: {cand_model}")
+            cand_prov, cand_sub = _infer_provider(cand_model)
+            cand_key, cand_url = await _resolve_api_key(cand_prov, cand_sub)
             try:
                 response = await acompletion(
                     model=cand_model,
                     messages=llm_messages,
                     tools=tools_to_pass,
                     temperature=0.2 if execution_mode == "speed" else 0.4,
-                    max_tokens=2000,
+                    max_tokens=4096,
+                    api_key=cand_key,
+                    base_url=cand_url,
+                    trace_metadata=trace_metadata,
                 )
                 used_model = cand_model
                 fallback_occurred = True
@@ -454,6 +514,15 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
         "current_thought": safe_thought,
         "active_model": used_model,
         "token_usage": getattr(response, "usage", None),
+        "sub_timings": {
+            "prompt_prep_ms": prompt_prep_ms,
+            "rag_retrieval_ms": rag_duration_ms,
+            "provider_ttft_ms": getattr(response, "ttft_ms", 0.0) or 0.0,
+            "llm_completion_ms": llm_duration_ms,
+            "prompt_chars": getattr(response, "prompt_chars", 0),
+            "tool_schema_chars": getattr(response, "tool_schema_chars", 0),
+            "tool_count": len(tools_to_pass or []),
+        },
     }
 
 

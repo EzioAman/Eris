@@ -130,17 +130,53 @@ class CoreToolbox:
     workspace git management, web retrieval, and scratchpad capabilities.
     """
 
-    @staticmethod
-    def is_safe_path(target_path: str) -> Tuple[bool, Path]:
-        """Resolves target and asserts workspace containment."""
+    SENSITIVE_FILE_NAMES = {
+        ".env",
+        ".env.local",
+        ".env.production",
+        ".env.development",
+        ".env.staging",
+        "auth.db",
+        "credentials.json",
+        "secrets.json",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+    }
+    SENSITIVE_EXTENSIONS = {
+        ".pem",
+        ".key",
+        ".p12",
+        ".pfx",
+        ".pkcs12",
+    }
+
+    @classmethod
+    def is_safe_path(cls, target_path: str) -> Tuple[bool, Path]:
+        """Resolves target, asserts workspace containment, and blocks sensitive credential access."""
         raw = target_path.strip().lstrip("/\\")
         ws = settings.WORKSPACE_PATH.resolve()
         resolved = (ws / raw).resolve()
         try:
-            resolved.relative_to(ws)
-            return True, resolved
+            rel = resolved.relative_to(ws)
         except ValueError:
             return False, resolved
+
+        # Block traversal into .git directory
+        if any(part == ".git" for part in rel.parts):
+            return False, resolved
+
+        # Block access to sensitive files and credentials
+        lower_name = resolved.name.lower()
+        if (
+            lower_name in cls.SENSITIVE_FILE_NAMES
+            or (lower_name.startswith(".env") and lower_name != ".env.example")
+            or resolved.suffix.lower() in cls.SENSITIVE_EXTENSIONS
+        ):
+            return False, resolved
+
+        return True, resolved
 
     @classmethod
     def read_file(cls, path_arg: str) -> str:
@@ -148,7 +184,7 @@ class CoreToolbox:
         path = path_arg.strip()
         safe, full_path = cls.is_safe_path(path)
         if not safe:
-            return f"SECURITY_ERROR: Access to '{path}' blocked (outside workspace boundary)."
+            return f"SECURITY_ERROR: Access to '{path}' blocked (security perimeter or outside workspace)."
 
         if not full_path.exists():
             return f"ERROR: File '{path}' not found."

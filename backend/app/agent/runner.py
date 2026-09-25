@@ -14,11 +14,13 @@ try:
     from app.agent.graph import agent_graph
     from app.config import settings
     from app.services.learning import load_habits
+    from app.services.rag_service import rag_vault
     from app.services.vault_service import get_all_active_credentials_sync
 except ImportError:
     from backend.app.agent.graph import agent_graph
     from backend.app.config import settings
     from backend.app.services.learning import load_habits
+    from backend.app.services.rag_service import rag_vault
     from backend.app.services.vault_service import get_all_active_credentials_sync
 
 logger = logging.getLogger("eris.agent.runner")
@@ -80,16 +82,40 @@ class AgentRunner:
             logger.error(f"Failed to save user memory to {target}: {ex}")
 
     def append_to_user_history(self, user_id: Optional[str], role: str, content: str) -> None:
-        mem = self.load_user_memory(user_id)
+        safe_id = self._sanitize_user_id(user_id)
+        mem = self.load_user_memory(safe_id)
         if "history" not in mem or not isinstance(mem["history"], list):
             mem["history"] = []
         mem["history"].append({"role": role, "content": content})
         if len(mem["history"]) > 50:
             mem["history"] = mem["history"][-50:]
-        self.save_user_memory(user_id, mem)
+        self.save_user_memory(safe_id, mem)
 
-        if self._sanitize_user_id(user_id) == "default_user":
+        if safe_id == "default_user":
             self.memory = mem
+
+        # Index episodic preferences into knowledge vault in background without blocking turn startup
+        if role == "user" and len(content.strip()) > 15:
+            try:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(asyncio.to_thread(
+                        rag_vault.add_chunk,
+                        source=f"memory/users/{safe_id}",
+                        category="memory",
+                        title=f"User Statement: {content.strip()[:40]}...",
+                        content=content.strip(),
+                    ))
+                except RuntimeError:
+                    rag_vault.add_chunk(
+                        source=f"memory/users/{safe_id}",
+                        category="memory",
+                        title=f"User Statement: {content.strip()[:40]}...",
+                        content=content.strip(),
+                    )
+            except Exception as r_err:
+                logger.debug(f"Episodic memory indexing notice: {r_err}")
+
 
     def clear_user_history(self, user_id: Optional[str] = None) -> None:
         safe_id = self._sanitize_user_id(user_id)
@@ -501,11 +527,20 @@ class AgentRunner:
             }
             return
 
-        user_habits = load_habits()
+        user_habits, _ = await asyncio.gather(
+            asyncio.to_thread(load_habits),
+            asyncio.to_thread(self.append_to_user_history, safe_user, "user", message),
+        )
         scoped_thread = f"{safe_user}_{session_id}" if not session_id.startswith(f"{safe_user}_") else session_id
-        config = {"configurable": {"thread_id": scoped_thread}}
-
-        self.append_to_user_history(safe_user, "user", message)
+        config = {
+            "configurable": {"thread_id": scoped_thread},
+            "metadata": {
+                "session_id": scoped_thread,
+                "user_id": safe_user,
+                "model": model_to_use,
+            },
+            "tags": [f"user:{safe_user}", f"model:{model_to_use}"],
+        }
 
         yield {
             "type": "turn_start",
@@ -533,81 +568,124 @@ class AgentRunner:
         accumulated_thoughts: List[str] = []
         token_usage: Optional[Dict[str, Any]] = None
 
+        node_timings: Dict[str, float] = {}
+        sub_timings: Dict[str, float] = {}
+
         try:
-            async for step in agent_graph.astream(initial_state, config=config):
-                for node_name, node_output in step.items():
-                    if not isinstance(node_output, dict):
-                        continue
+            node_start = time.perf_counter()
+            async for event in agent_graph.astream_events(initial_state, config=config, version="v2"):
+                ev_type = event.get("event")
 
-                    # 1. Reasoner node output
-                    if node_name == "reasoner":
-                        thought = node_output.get("current_thought", "")
-                        if thought:
-                            accumulated_thoughts.append(thought)
+                # 1. Real-time token streaming to frontend
+                if ev_type == "on_chat_model_stream":
+                    chunk_obj = event.get("data", {}).get("chunk")
+                    if chunk_obj and getattr(chunk_obj, "content", None):
+                        c_text = str(chunk_obj.content)
+                        if c_text:
                             yield {
-                                "type": "thought",
-                                "text": thought,
-                                "turn": node_output.get("turn_count", 1),
+                                "type": "chunk",
+                                "text": c_text,
                             }
+                    continue
 
-                        usage = node_output.get("token_usage")
-                        if usage:
-                            token_usage = usage
-                            yield {
-                                "type": "usage",
-                                "prompt_tokens": usage.get("prompt_tokens", 0),
-                                "completion_tokens": usage.get("completion_tokens", 0),
-                                "total_tokens": usage.get("total_tokens", 0),
-                                "model": node_output.get("active_model") or model_to_use,
-                            }
+                # 2. Process node state transitions on chain completion
+                if ev_type != "on_chain_end":
+                    continue
 
-                        node_model = node_output.get("active_model")
-                        if node_model and node_model != model_to_use:
-                            model_to_use = node_model
-                            self.set_active_model(node_model)
-                            yield {
-                                "type": "model_switch",
-                                "model": node_model,
-                                "text": f"Switched active model to {node_model}",
-                            }
+                node_name = event.get("name")
+                if node_name not in ("reasoner", "tool_runner", "approval_gate", "learning_recorder"):
+                    continue
 
-                        msgs = node_output.get("messages", [])
-                        if msgs:
-                            last_msg = msgs[-1]
-                            if isinstance(last_msg, AIMessage):
-                                has_tool_calls = bool(getattr(last_msg, "tool_calls", None))
-                                # Only set final_reply if it's not purely intermediate tool dispatch
-                                if last_msg.content and not has_tool_calls:
-                                    final_reply = str(last_msg.content)
+                node_output = event.get("data", {}).get("output")
+                if not isinstance(node_output, dict):
+                    continue
 
-                                if has_tool_calls:
-                                    for tc in last_msg.tool_calls:
-                                        t_name = tc.get("name", "")
-                                        t_args = tc.get("args", {})
-                                        if t_name == "search_web":
-                                            yield {
-                                                "type": "search",
-                                                "query": t_args.get("query", ""),
-                                                "status": "searching",
-                                                "results": [],
-                                            }
-                                        else:
-                                            yield {
-                                                "type": "action",
-                                                "text": f"Invoking tool: {t_name}",
-                                                "tool": t_name,
-                                                "args": t_args,
-                                            }
+                node_elapsed = round((time.perf_counter() - node_start) * 1000.0, 2)
+                node_timings[node_name] = node_elapsed
+                yield {
+                    "type": "node_timing",
+                    "node": node_name,
+                    "duration_ms": node_elapsed,
+                }
 
-                    # 2. Tool runner node output
-                    elif node_name == "tool_runner":
-                        tools_run = node_output.get("executed_tools", [])
-                        for t in tools_run:
-                            yield {
-                                "type": "observation",
-                                "text": f"[{t.get('name', 'Tool')}]: {t.get('output', '')[:120]}...",
-                            }
-                            tool_calls.append(t)
+                # 1. Reasoner node output
+                if node_name == "reasoner":
+                    if "sub_timings" in node_output and isinstance(node_output["sub_timings"], dict):
+                        sub_timings.update(node_output["sub_timings"])
+                        yield {
+                            "type": "telemetry",
+                            "sub_timings": sub_timings,
+                        }
+
+                    thought = node_output.get("current_thought", "")
+                    if thought:
+                        accumulated_thoughts.append(thought)
+                        yield {
+                            "type": "thought",
+                            "text": thought,
+                            "turn": node_output.get("turn_count", 1),
+                        }
+
+                    usage = node_output.get("token_usage")
+                    if usage:
+                        token_usage = usage
+                        yield {
+                            "type": "usage",
+                            "prompt_tokens": usage.get("prompt_tokens", 0),
+                            "completion_tokens": usage.get("completion_tokens", 0),
+                            "total_tokens": usage.get("total_tokens", 0),
+                            "model": node_output.get("active_model") or model_to_use,
+                        }
+
+                    node_model = node_output.get("active_model")
+                    if node_model and node_model != model_to_use:
+                        model_to_use = node_model
+                        self.set_active_model(node_model)
+                        yield {
+                            "type": "model_switch",
+                            "model": node_model,
+                            "text": f"Switched active model to {node_model}",
+                        }
+
+                    msgs = node_output.get("messages", [])
+                    if msgs:
+                        last_msg = msgs[-1]
+                        if isinstance(last_msg, AIMessage):
+                            has_tool_calls = bool(getattr(last_msg, "tool_calls", None))
+                            # Only set final_reply if it's not purely intermediate tool dispatch
+                            if last_msg.content and not has_tool_calls:
+                                final_reply = str(last_msg.content)
+
+                            if has_tool_calls:
+                                for tc in last_msg.tool_calls:
+                                    t_name = tc.get("name", "")
+                                    t_args = tc.get("args", {})
+                                    if t_name == "search_web":
+                                        yield {
+                                            "type": "search",
+                                            "query": t_args.get("query", ""),
+                                            "status": "searching",
+                                            "results": [],
+                                        }
+                                    else:
+                                        yield {
+                                            "type": "action",
+                                            "text": f"Invoking tool: {t_name}",
+                                            "tool": t_name,
+                                            "args": t_args,
+                                        }
+
+                # 2. Tool runner node output
+                elif node_name == "tool_runner":
+                    tools_run = node_output.get("executed_tools", [])
+                    for t in tools_run:
+                        yield {
+                            "type": "observation",
+                            "text": f"[{t.get('name', 'Tool')}]: {t.get('output', '')[:120]}...",
+                        }
+                        tool_calls.append(t)
+
+                node_start = time.perf_counter()
 
             # Check for human-in-the-loop interrupts
             state_snapshot = agent_graph.get_state(config)
@@ -643,6 +721,8 @@ class AgentRunner:
                 "reasoning": "\n\n".join(accumulated_thoughts) if accumulated_thoughts else None,
                 "reasoningSteps": [{"turn": idx + 1, "thought": t} for idx, t in enumerate(accumulated_thoughts)] if accumulated_thoughts else None,
                 "usage": token_usage,
+                "node_timings": node_timings,
+                "sub_timings": sub_timings,
             }
 
         except Exception as ex:

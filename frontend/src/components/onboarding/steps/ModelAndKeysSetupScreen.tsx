@@ -54,6 +54,14 @@ const PROVIDERS = [
     hint: 'Direct GPT-4o / o1 reasoning',
   },
   {
+    id: 'nvidia',
+    name: 'Nvidia NIM',
+    model: 'nvidia/meta/llama-3.3-70b-instruct',
+    tag: 'Enterprise Speed',
+    placeholder: 'nvapi-...',
+    hint: 'Llama 3.3 70B & DeepSeek reasoning',
+  },
+  {
     id: 'ollama',
     name: 'Local Ollama',
     model: 'ollama/llama3.2',

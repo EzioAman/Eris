@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/keys", tags=["API Keys Vault"])
 
 
 class CreateKeyRequest(BaseModel):
-    provider: str = Field(..., description="Provider: gemini, openrouter, openai, groq, anthropic, ollama, custom")
+    provider: str = Field(..., description="Provider: gemini, openrouter, openai, groq, nvidia, anthropic, deepseek, ollama, custom")
     label: str = Field(..., description="Custom human-readable identifier for this key")
     api_key: str = Field(..., description="Raw secret API key (encrypted on receipt, never stored plaintext)")
     model_name: Optional[str] = Field(None, description="Optional default model to pair with this key")
