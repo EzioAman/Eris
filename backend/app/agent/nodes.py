@@ -303,10 +303,18 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
     if intent == IntentType.CONVERSATION:
         registered_tools_list = []
     else:
-        registered_tools_list = [
-            {"name": t.name, "description": t.description, "source": t.source, "risk_level": t.risk_level.value}
-            for t in lc_tools
-        ]
+        registered_tools_list = []
+        for t in lc_tools:
+            t_def = get_tool_by_name(t.name)
+            source = getattr(t_def, "source", None) or (t.metadata.get("source") if getattr(t, "metadata", None) else None) or getattr(t, "source", "core")
+            risk = getattr(t_def, "risk_level", None)
+            risk_val = getattr(risk, "value", None) or (t.metadata.get("risk_level") if getattr(t, "metadata", None) else None) or getattr(t, "risk_level", "low")
+            registered_tools_list.append({
+                "name": t.name,
+                "description": t.description,
+                "source": source,
+                "risk_level": risk_val if isinstance(risk_val, str) else getattr(risk_val, "value", "low")
+            })
 
     user_id = state.get("user_id")
 

@@ -477,6 +477,40 @@ class CoreToolbox:
         return cls.scrape_web(url)
 
     @classmethod
+    def scrape_web(cls, url_arg: str) -> str:
+        """Fetches and extracts readable Markdown content from a given web URL."""
+        url = url_arg.strip()
+        if not url:
+            return "ERROR: Missing web URL."
+        try:
+            from tools import scrape_website
+            with NonInteractiveInputGuard():
+                return scrape_website.execute(url)
+        except Exception:
+            pass
+
+        try:
+            if not url.startswith("http://") and not url.startswith("https://"):
+                url = "https://" + url
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                raw_html = resp.read().decode("utf-8", errors="replace")
+            parser = CleanHTMLToMarkdownParser()
+            parser.feed(raw_html)
+            md = parser.get_markdown()
+            if not md:
+                return "WEB_SCRAPE: No readable content found on page."
+            max_len = 10000
+            if len(md) > max_len:
+                md = md[:max_len] + f"\n\n[Content truncated at {max_len} chars...]"
+            return f"WEB_SCRAPE_RESULT ({url}):\n\n{md}"
+        except Exception as ex:
+            return f"WEB_SCRAPE_ERROR ({url}): {str(ex)}"
+
+    @classmethod
     def antigravity_tools(cls, action_arg: str) -> str:
         """Interacts with Antigravity IDE rules, skills, and agents configuration."""
         action = action_arg.strip().lower()

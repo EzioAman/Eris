@@ -21,9 +21,10 @@
         "last_tested": "1790196336.3388793"
     },
     "scrape_website.py": {
-        "hash": "581fd3bbb3dd7c73f4e1f148ab51f72dd9f1494d447518f4ac59483766755e85",
+        "hash": "bd430f61d01467355f761b83f1c67e972bcf1896f30fb330aa691cc383970914",
         "status": "verified",
-        "last_tested": "1789436014.1432648"
+        "last_tested": "1790353287.7834432",
+        "author": "eris"
     },
     "send_email.py": {
         "hash": "d789aaddf4978827cd1460575749144ccff5e5197f96da5b72fb756bc6c728b0",

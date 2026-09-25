@@ -433,11 +433,16 @@ class ToolRegistry:
         self.initialize()
         langchain_tools: List[StructuredTool] = []
         for tool_def in self._tools.values():
+            risk_val = tool_def.risk_level.value if hasattr(tool_def.risk_level, "value") else str(tool_def.risk_level)
             st = StructuredTool.from_function(
                 func=tool_def.function,
                 name=tool_def.name,
                 description=tool_def.description,
                 args_schema=tool_def.args_schema,
+                metadata={
+                    "source": tool_def.source,
+                    "risk_level": risk_val
+                }
             )
             langchain_tools.append(st)
         return langchain_tools
