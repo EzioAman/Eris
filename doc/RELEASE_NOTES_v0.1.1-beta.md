@@ -3,8 +3,8 @@
 > **Release Tag**: `v0.1.1-beta`  
 > **Target Platform**: Windows 10 / Windows 11 (64-bit)  
 > **Release Date**: September 25, 2026  
-> **Binary Checksum (SHA256)**: `0CB40EB0B3A2AC1E4E94BD5E65CFE0165E4BE69E07F17A9231969BAA45D4A35E`  
-> **Package Size**: 246.2 MB  
+> **Binary Checksum (SHA256)**: `3DA0F7601177C83689A521DC632E3DF29932E70B977BECB79F115057287196DA`  
+> **Package Size**: 208.6 MB (reduced from 246.2 MB via LiteLLM purge)  
 
 ---
 
