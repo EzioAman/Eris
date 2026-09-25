@@ -122,7 +122,10 @@ def _handle_slash_commands(text: str, session_id: str, user_id: Optional[str] = 
 
     if base_cmd in ("/tools", "/registry"):
         tools = get_all_tools()
-        lines = [f"• **`{t.name}`** ({t.source}): {t.description}" for t in tools.values()]
+        lines = []
+        for t in tools.values():
+            src = getattr(t, "source", None) or (t.metadata.get("source") if getattr(t, "metadata", None) else None) or "core"
+            lines.append(f"• **`{t.name}`** ({src}): {t.description}")
         reply_text = f"### Registered Tools ({len(tools)})\n\n" + "\n".join(lines)
         return {
             "ok": True,

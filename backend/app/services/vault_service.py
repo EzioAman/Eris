@@ -310,5 +310,16 @@ async def get_dynamic_vault_fallbacks(
             if full_model != clean_active and full_model not in candidates:
                 candidates.append(full_model)
 
+    # 2. Dynamically discover live models available for active credentials via live provider APIs
+    try:
+        from backend.app.agent.runner import runner
+        discovered = runner.fetch_models(force_refresh=False)
+        for m in discovered:
+            mid = (m.get("id") or "").strip()
+            if mid and mid != clean_active and mid not in candidates:
+                candidates.append(mid)
+    except Exception as ex:
+        logger.debug(f"Dynamic model discovery for fallbacks: {ex}")
+
     return candidates
 

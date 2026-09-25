@@ -97,15 +97,120 @@ def _convert_messages_for_llm(system_prompt: str, messages: List[BaseMessage]) -
     return llm_msgs
 
 
-def _extract_thought_content(raw_text: str) -> tuple[str, str]:
-    """Extracts reasoning enclosed in <think>...</think> tags and returns (thought, remaining_text)."""
-    think_pattern = r"<think>(.*?)</think>"
-    match = re.search(think_pattern, raw_text, flags=re.DOTALL)
-    if match:
-        thought = match.group(1).strip()
-        cleaned = re.sub(think_pattern, "", raw_text, flags=re.DOTALL).strip()
-        return thought, cleaned
-    return "", raw_text.strip()
+def format_user_friendly_error(error: Any, model_name: str = "") -> str:
+    """
+    Translates raw provider errors, HTTP exceptions, Google RPC JSON payloads,
+    and Python stack traces into clear, professional, user-friendly notices.
+    Strictly prevents leaking internal endpoints, credentials, or raw JSON RPC dumps.
+    """
+    err_str = str(error or "").strip()
+    err_lower = err_str.lower()
+    clean_model = model_name.strip() if model_name else "Selected Model"
+
+    if any(k in err_lower for k in ("429", "resource_exhausted", "quota", "rate limit", "token count", "rate_limit")):
+        return (
+            f"> [!WARNING]\n"
+            f"> **Provider Rate Limit Reached**: `{clean_model}` has reached its current rate limit or quota.\n"
+            f"> Please select another active model from the top selector or retry in a few moments."
+        )
+
+    if any(k in err_lower for k in ("401", "403", "unauthorized", "invalid_api_key", "permission_denied", "api key not valid")):
+        return (
+            f"> [!CAUTION]\n"
+            f"> **Authentication Error**: The API key for `{clean_model}` was rejected or is invalid.\n"
+            f"> Please verify your credential in **Settings > API Key Vault**."
+        )
+
+    if any(k in err_lower for k in ("context_length_exceeded", "maximum context length", "too many tokens")):
+        return (
+            f"> [!NOTE]\n"
+            f"> **Context Length Exceeded**: The current conversation exceeds the context window for `{clean_model}`.\n"
+            f"> Consider starting a fresh session or selecting a large-context model."
+        )
+
+    if any(k in err_lower for k in ("connection", "timeout", "timed out", "502", "503", "504", "service_unavailable")):
+        return (
+            f"> [!WARNING]\n"
+            f"> **Provider Connection Timeout**: Unable to reach the `{clean_model}` service.\n"
+            f"> The model provider may be experiencing brief downtime. Please retry or choose another model."
+        )
+
+    if any(k in err_lower for k in ("not found", "404", "model_not_found")):
+        return (
+            f"> [!NOTE]\n"
+            f"> **Model Not Found**: `{clean_model}` is not recognized or has been discontinued by the provider.\n"
+            f"> Please choose an available model from the header selector."
+        )
+
+    # General unexpected runtime exception (e.g. StructuredTool attribute error, etc.)
+    return (
+        f"> [!NOTE]\n"
+        f"> ERIS encountered an issue while processing your request with `{clean_model}`.\n"
+        f"> Please try switching models in the header or rephrasing your message."
+    )
+
+
+def _extract_thought_content(raw_text: str, reasoning_content: Optional[str] = None) -> tuple[str, str]:
+    """
+    Extracts reasoning enclosed in <think>, <thought>, <thinking>, <reasoning>, [THINKING] tags,
+    as well as provider reasoning_content and unclosed think tags.
+    Returns (thought_text, user_facing_content).
+    """
+    thoughts: List[str] = []
+
+    if reasoning_content and str(reasoning_content).strip():
+        thoughts.append(str(reasoning_content).strip())
+
+    cleaned = raw_text or ""
+
+    # 1. Extract closed reasoning blocks: <think>, <thought>, <thinking>, <reasoning>, [THINKING], ```thought
+    tag_patterns = [
+        r"<think>(.*?)</think>",
+        r"<thought>(.*?)</thought>",
+        r"<thinking>(.*?)</thinking>",
+        r"<reasoning>(.*?)</reasoning>",
+        r"\[THINKING\](.*?)\[/THINKING\]",
+        r"```thought\s*\n(.*?)\n```",
+    ]
+    for pattern in tag_patterns:
+        for m in re.finditer(pattern, cleaned, flags=re.DOTALL | re.IGNORECASE):
+            content = m.group(1).strip()
+            if content:
+                thoughts.append(content)
+        cleaned = re.sub(pattern, "", cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+
+    # 2. Check for unclosed think/thought tags at start
+    unclosed_patterns = [
+        r"^<(?:think|thought|thinking|reasoning)>(.*?)(?:$)",
+    ]
+    for pattern in unclosed_patterns:
+        m = re.match(pattern, cleaned, flags=re.DOTALL | re.IGNORECASE)
+        if m:
+            content = m.group(1).strip()
+            if content:
+                thoughts.append(content)
+            cleaned = ""
+            break
+
+    # 3. Check for meta-deliberation leaks / prompt echoes:
+    # E.g. tags before acting." ... Let's craft: "..."
+    meta_deliberation_patterns = [
+        r'^(.*?)(?:Let\'s craft(?:\.|:)?\s*"?)(.*)$',
+        r'^(?:tags before acting\.[^\n]*\n?)(.*)$',
+    ]
+    for mpat in meta_deliberation_patterns:
+        mm = re.search(mpat, cleaned, flags=re.DOTALL | re.IGNORECASE)
+        if mm:
+            groups = mm.groups()
+            if len(groups) == 2 and groups[1].strip():
+                if groups[0].strip():
+                    thoughts.append(groups[0].strip())
+                cleaned = groups[1].strip().strip('"').strip()
+            elif len(groups) == 1 and groups[0].strip():
+                cleaned = groups[0].strip()
+
+    combined_thought = "\n\n".join(thoughts).strip()
+    return combined_thought, cleaned.strip()
 
 
 def _parse_embedded_tool_calls(raw_text: str) -> tuple[List[Dict[str, Any]], str]:
@@ -444,19 +549,21 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
 
         if not response:
             logger.error(f"Reasoning with model '{active_model}' and dynamic fallbacks failed: {last_error}")
+            friendly_err = format_user_friendly_error(last_error, active_model)
             error_msg = AIMessage(
-                content=f"An error occurred during reasoning with model {active_model}: {last_error}",
+                content=friendly_err,
                 tool_calls=[],
             )
             return {
                 "messages": [error_msg],
-                "current_thought": f"Reasoning failed: {last_error}",
+                "current_thought": f"Reasoning failed for {active_model}",
                 "active_model": active_model,
             }
 
     choice = response.choices[0].message
     raw_content = choice.content or ""
-    thought, clean_content = _extract_thought_content(raw_content)
+    native_reasoning = getattr(choice, "reasoning_content", None) or getattr(choice, "reasoning", None) or ""
+    thought, clean_content = _extract_thought_content(raw_content, reasoning_content=native_reasoning)
 
     tool_calls: List[Dict[str, Any]] = []
     thought_signatures: Dict[str, str] = {}
@@ -486,24 +593,20 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
             tool_calls.extend(embedded_calls)
             clean_content = stripped_content
 
-    # If the response has no tools and clean_content is empty, synthesize a safe response
-    if not tool_calls and not (clean_content or raw_content).strip():
-        clean_content = "I have reviewed your request. Please let me know how you would like me to assist you next."
+    # If the response has no tools and clean_content is empty (e.g. only thought tags were emitted), synthesize a safe response
+    if not tool_calls and not clean_content:
+        clean_content = "I have reviewed your request. How would you like me to assist you next?"
 
     # Apply credential scrubber to eliminate any potential leakage
     safe_content = scrub_sensitive_credentials(clean_content or raw_content)
     safe_thought = scrub_sensitive_credentials(thought)
 
-    # If fallback occurred, inform user clearly with the primary reason
+    # If fallback occurred, inform user clearly without leaking raw provider internals
     if fallback_occurred:
-        err_msg_clean = str(primary_error or last_error).replace("\n", " ").strip()
-        # Truncate very long raw JSON error details if needed for readability
-        if len(err_msg_clean) > 160:
-            err_msg_clean = err_msg_clean[:157] + "..."
         notice = (
             f"> [!NOTE]\n"
-            f"> **Model Fallback Notice**: Model `{active_model}` was unavailable ({err_msg_clean}). "
-            f"Automatically switched to active vault model `{used_model}` to complete your task.\n\n"
+            f"> **Model Fallback Notice**: Model `{active_model}` was unavailable. "
+            f"Automatically switched to active vault model `{used_model}` to complete your request.\n\n"
         )
         safe_content = notice + safe_content
 

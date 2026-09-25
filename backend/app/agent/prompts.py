@@ -36,7 +36,10 @@ class PromptBuilder:
 
     @classmethod
     def classify_intent(cls, prompt: str) -> IntentType:
-        """Classifies the user prompt to tune system reasoning constraints."""
+        """
+        Classifies the user prompt to tune system reasoning constraints and tool availability.
+        Uses hybrid regex heuristic matching and semantic embedding verification.
+        """
         text = prompt.lower().strip()
 
         # 1. Multi-agent swarm triggers
@@ -54,7 +57,33 @@ class PromptBuilder:
         )):
             return IntentType.WORKFLOW_ORCHESTRATION
 
-        # 3. Read & Inspection triggers
+        # 3. Creative writing, roleplay, and casual banter (strictly CONVERSATION - zero tool calls)
+        creative_pattern = re.compile(
+            r"\b(poem|poetry|haiku|haikyuu|story|lyrics|song|joke|riddle|roleplay|scenario|essay|lore)\b",
+            re.IGNORECASE
+        )
+        if creative_pattern.search(text):
+            return IntentType.CONVERSATION
+
+        casual_knowledge_pattern = re.compile(
+            r"^(do you know|who is|what is|tell me about|explain|describe|what do you think|can you explain)\b",
+            re.IGNORECASE
+        )
+        # Casual questions without explicit system/file action requests are conversational
+        if casual_knowledge_pattern.search(text) and not any(k in text for k in ("file", "code", "repo", "terminal", "command", "tool", "browse", "scrape", "search web", "run")):
+            return IntentType.CONVERSATION
+
+        if text in ("hi", "hello", "hey", "hi eris", "hello eris", "hey eris", "good morning", "good evening", "good afternoon"):
+            return IntentType.CONVERSATION
+
+        # 4. Tool Registry & Workspace Inspection triggers
+        registry_pattern = re.compile(
+            r"\b(check|audit|inspect|verify|show|list|view|read)\s+(the\s+)?(tool\s*registry|registry|tools|plugins)\b",
+            re.IGNORECASE
+        )
+        if registry_pattern.search(text):
+            return IntentType.READ_INSPECTION
+
         read_keywords = (
             "show me the dir", "show dir", "check dir", "check the dir",
             "list dir", "view file", "read file", "show contents", "what is in",
@@ -67,7 +96,7 @@ class PromptBuilder:
         if any(k in text for k in read_keywords):
             return IntentType.READ_INSPECTION
 
-        # 4. Action triggers
+        # 5. Genuine system/file/action triggers
         action_keywords = (
             "create", "write", "make", "delete", "run", "execute", "edit",
             "update", "replace", "install", "commit", "push", "play", "send",
@@ -76,7 +105,33 @@ class PromptBuilder:
         )
         words = set(re.findall(r"\b[a-zA-Z]{3,}\b", text))
         if any(w in words for w in action_keywords):
-            return IntentType.ACTION_EXECUTE
+            has_path_or_ext = bool(re.search(r"(\.[a-zA-Z0-9]+|/|\\)", text))
+            action_context = (
+                "file", "folder", "dir", "directory", "tool", "script", "repo",
+                "code", "browser", "command", "install", "build", "git",
+                "function", "class", "test", "server", "app"
+            )
+            if has_path_or_ext or any(c in text for c in action_context) or any(w in words for w in ("run", "execute", "install", "deploy", "patch", "refactor", "delete", "edit", "modify", "build", "fix")):
+                return IntentType.ACTION_EXECUTE
+
+        # 6. Semantic verification fallback for borderline queries
+        try:
+            from backend.app.services.rag_service import rag_vault
+            vec = rag_vault.generate_embedding(text)
+            if vec:
+                # Compare against prototype for conversation
+                conv_vec = rag_vault.generate_embedding("casual greeting conversation banter creative writing poem story lore general inquiry")
+                if conv_vec:
+                    import math
+                    dot = sum(a * b for a, b in zip(vec, conv_vec))
+                    norm_a = math.sqrt(sum(a * a for a in vec))
+                    norm_b = math.sqrt(sum(b * b for b in conv_vec))
+                    if norm_a and norm_b:
+                        sim = dot / (norm_a * norm_b)
+                        if sim > 0.65:
+                            return IntentType.CONVERSATION
+        except Exception:
+            pass
 
         # Default: general conversation, inquiry, or greeting
         return IntentType.CONVERSATION
@@ -262,17 +317,14 @@ class PromptBuilder:
                 "- Respond warmly, intelligently, and concisely without unnecessary tool executions.\n\n"
             )
 
-        # Cognitive Reasoning (<think>...</think>) & Goal-Driven Self-Reflection
-        prompt += (
-            "### Goal-Driven Self-Reasoning & Internal Dialogue (<think>...</think>):\n"
-            "- Always formulate an internal chain-of-thought inside `<think>` and `</think>` tags before acting.\n"
-            "- Reason with yourself as a goal-driven autonomous agent:\n"
-            "  1. Goal Identification: What is the core goal the user wants to accomplish?\n"
-            "  2. Tech Stack Alignment: Which technologies should be used? (e.g., React, Vite, TypeScript, Tailwind). Are they present in the workspace?\n"
-            "  3. Template & Asset Reuse: Can current pre-built templates or existing modules achieve this with maximum quality?\n"
-            "  4. Tool Strategy: Which tools are required to achieve the goal?\n"
-            "- Authentic internal reasoning and self-reflection belong exclusively inside `<think>...</think>`.\n\n"
-        )
+        # Cognitive Reasoning (<think>...</think>) & Goal-Driven Self-Reflection (Technical & Action tasks only)
+        if intent != IntentType.CONVERSATION:
+            prompt += (
+                "### Technical Reasoning & Self-Reflection (<think>...</think>):\n"
+                "- For complex engineering, debugging, or tool execution tasks, place your internal analysis inside <think> and </think> tags.\n"
+                "- Never output draft notes, prompt rule citations, or internal meta-commentary in your final response.\n"
+                "- Your final message must directly and cleanly answer the user.\n\n"
+            )
 
         # Strict API Key & Credential Zero-Exposure Directive (applies to all intents)
         prompt += (

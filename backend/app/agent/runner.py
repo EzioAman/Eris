@@ -572,21 +572,40 @@ class AgentRunner:
         node_timings: Dict[str, float] = {}
         sub_timings: Dict[str, float] = {}
 
+        inside_thought_tag = False
+
         try:
             node_start = time.perf_counter()
             async for event in agent_graph.astream_events(initial_state, config=config, version="v2"):
                 ev_type = event.get("event")
 
-                # 1. Real-time token streaming to frontend
+                # 1. Real-time token streaming to frontend (with thought tag filtering)
                 if ev_type == "on_chat_model_stream":
                     chunk_obj = event.get("data", {}).get("chunk")
                     if chunk_obj and getattr(chunk_obj, "content", None):
                         c_text = str(chunk_obj.content)
                         if c_text:
-                            yield {
-                                "type": "chunk",
-                                "text": c_text,
-                            }
+                            # Detect entry into reasoning tags
+                            if any(tag in c_text.lower() for tag in ("<think>", "<thought>", "<thinking>", "<reasoning>")):
+                                inside_thought_tag = True
+                                c_text = re.sub(r"<(?:think|thought|thinking|reasoning)>", "", c_text, flags=re.IGNORECASE)
+
+                            # Detect exit from reasoning tags
+                            if any(tag in c_text.lower() for tag in ("</think>", "</thought>", "</thinking>", "</reasoning>")):
+                                inside_thought_tag = False
+                                c_text = re.sub(r"</(?:think|thought|thinking|reasoning)>", "", c_text, flags=re.IGNORECASE)
+
+                            if inside_thought_tag:
+                                if c_text.strip():
+                                    yield {
+                                        "type": "thought",
+                                        "text": c_text,
+                                    }
+                            elif c_text:
+                                yield {
+                                    "type": "chunk",
+                                    "text": c_text,
+                                }
                     continue
 
                 # 2. Process node state transitions on chain completion
@@ -728,9 +747,11 @@ class AgentRunner:
 
         except Exception as ex:
             logger.error(f"Error in stream_turn: {ex}", exc_info=True)
+            from backend.app.agent.nodes import format_user_friendly_error
+            friendly_reply = format_user_friendly_error(ex, model_to_use)
             yield {
                 "type": "done",
-                "reply": f"Execution encountered an error: {ex}",
+                "reply": friendly_reply,
                 "toolCalls": tool_calls,
                 "model": model_to_use,
                 "memory_updated": False,

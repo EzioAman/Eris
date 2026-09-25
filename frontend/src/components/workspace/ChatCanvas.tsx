@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowDown, Terminal as TerminalIcon, Sparkles, Lightbulb, Workflow, Globe } from 'lucide-react';
+import { ArrowDown, Terminal as TerminalIcon, Sparkles, Lightbulb, Workflow, Globe, ZoomIn, ZoomOut } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { formatModelName } from '../../lib/modelUtils';
 import type { ChatMessage, ScheduledTaskItem, ActiveThinkingState } from './chatTypes';
@@ -122,6 +122,42 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
     }
   };
 
+  const [chatZoom, setChatZoom] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('eris_chat_zoom');
+      return saved ? parseInt(saved, 10) : 100;
+    } catch {
+      return 100;
+    }
+  });
+
+  const handleZoomIn = () => {
+    setChatZoom((prev) => {
+      const next = Math.min(prev + 10, 150);
+      try {
+        localStorage.setItem('eris_chat_zoom', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleZoomOut = () => {
+    setChatZoom((prev) => {
+      const next = Math.max(prev - 10, 80);
+      try {
+        localStorage.setItem('eris_chat_zoom', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleZoomReset = () => {
+    setChatZoom(100);
+    try {
+      localStorage.setItem('eris_chat_zoom', '100');
+    } catch {}
+  };
+
   return (
     <main
       className={cn(
@@ -129,6 +165,53 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
         'bg-transparent text-[var(--text-primary)]'
       )}
     >
+      {/* Floating Zoom Controls for Chat */}
+      <div
+        className={cn(
+          'absolute top-3 right-4 z-20 flex items-center gap-1 px-2 py-1 rounded-full border shadow-xs backdrop-blur-md transition-all font-sans',
+          isDarkMode
+            ? 'bg-neutral-900/80 border-white/10 text-neutral-300'
+            : 'bg-white/90 border-slate-200 text-slate-700'
+        )}
+      >
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          disabled={chatZoom <= 80}
+          title="Zoom out chat"
+          className={cn(
+            'cursor-pointer p-1 rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed',
+            isDarkMode ? 'hover:bg-white/10 text-neutral-300' : 'hover:bg-slate-100 text-slate-600'
+          )}
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={handleZoomReset}
+          title="Reset chat zoom (100%)"
+          className={cn(
+            'cursor-pointer px-1.5 py-0.5 rounded font-mono text-[11px] font-medium transition-colors',
+            isDarkMode ? 'text-neutral-400 hover:text-white' : 'text-slate-500 hover:text-slate-800'
+          )}
+        >
+          {chatZoom}%
+        </button>
+
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          disabled={chatZoom >= 150}
+          title="Zoom in chat"
+          className={cn(
+            'cursor-pointer p-1 rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed',
+            isDarkMode ? 'hover:bg-white/10 text-neutral-300' : 'hover:bg-slate-100 text-slate-600'
+          )}
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+      </div>
 
       {/* Scrollable Conversation Container */}
       <div
@@ -235,8 +318,10 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
               </div>
             </div>
           </div>
-        ) : (
-          <div className="max-w-3xl mx-auto w-full flex flex-col gap-6">
+          <div
+            className="max-w-3xl mx-auto w-full flex flex-col gap-6 origin-top transition-transform"
+            style={{ zoom: `${chatZoom}%` }}
+          >
             {messages.map((msg) => (
               <ChatMessageBubble
                 key={msg.id}
