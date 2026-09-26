@@ -312,6 +312,7 @@ async def handle_human_decision(payload: DecisionRequest):
     }
 
     final_reply = ""
+    reasoning = None
     tool_calls: List[Dict[str, Any]] = []
 
     async for event in runner.resume_after_decision(
@@ -321,12 +322,14 @@ async def handle_human_decision(payload: DecisionRequest):
     ):
         if event.get("type") == "done":
             final_reply = event.get("reply", "")
+            reasoning = event.get("reasoning")
             tool_calls = event.get("toolCalls", [])
 
     return {
         "ok": True,
         "sessionId": session_id,
         "reply": final_reply,
+        "reasoning": reasoning,
         "toolCalls": tool_calls,
         "timestamp": utc_iso_now(),
     }

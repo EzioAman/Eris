@@ -255,12 +255,18 @@ export const ToolOutputCard: React.FC<{ tool: ToolOutputItem; isDarkMode: boolea
           >
             {/* Drawer Sub-header */}
             <div className="flex items-center justify-between text-[11px] font-mono opacity-80 px-1">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span>Output preview</span>
                 <span>•</span>
                 <span>{lineCount} {lineCount === 1 ? 'line' : 'lines'}</span>
                 <span>•</span>
                 <span>{formattedSize}</span>
+                {tool.spooled && (
+                  <>
+                    <span>•</span>
+                    <span className="text-amber-400 font-semibold">Spooled to disk artifact</span>
+                  </>
+                )}
               </div>
 
               <button
@@ -277,6 +283,19 @@ export const ToolOutputCard: React.FC<{ tool: ToolOutputItem; isDarkMode: boolea
                 <span>{copied ? 'Copied' : 'Copy'}</span>
               </button>
             </div>
+
+            {tool.artifact_path && (
+              <div
+                className={cn(
+                  'text-[11px] font-mono px-2 py-1 rounded border break-all',
+                  isDarkMode
+                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                    : 'bg-amber-50 border-amber-200 text-amber-800'
+                )}
+              >
+                Saved to artifact: <code className="select-all underline">{tool.artifact_path}</code>
+              </div>
+            )}
 
             {/* Template or Preformatted Output */}
             {(() => {

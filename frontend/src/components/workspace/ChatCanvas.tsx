@@ -1,6 +1,6 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowDown, Terminal as TerminalIcon, Sparkles, Lightbulb, Workflow, Globe, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowDown, Terminal as TerminalIcon, Lightbulb, Workflow, Globe, Settings2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { formatModelName } from '../../lib/modelUtils';
 import type { ChatMessage, ScheduledTaskItem, ActiveThinkingState } from './chatTypes';
@@ -8,6 +8,7 @@ import { ChatMessageBubble } from './ChatMessageBubble';
 import { MarkdownContent } from './MarkdownContent';
 import { ClaudeThinkingBlock } from './ClaudeThinkingBlock';
 import { ErisAvatar } from '../ui/ErisAvatar';
+import { useSmartScroll } from './useSmartScroll';
 
 export interface ChatCanvasProps {
   messages: ChatMessage[];
@@ -28,6 +29,8 @@ export interface ChatCanvasProps {
   onOpenModelConfig?: () => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   activeModel?: string;
+  chatZoom?: number;
+  onZoomChange?: (newZoom: number) => void;
 }
 
 const getTimeGreeting = () => {
@@ -52,111 +55,65 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
   onOpenModelConfig,
   scrollRef,
   activeModel,
+  chatZoom = 100,
+  onZoomChange,
 }) => {
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
-  const touchStartYRef = useRef<number | null>(null);
+  const {
+    containerRef: scrollContainerRef,
+    following,
+    unseen,
+    scrollToBottom,
+    notifyStreamProgress,
+    notifyNewMessage,
+  } = useSmartScroll();
 
-  const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-
-    if (distanceToBottom > 60) {
-      setIsUserScrolledUp(true);
-    } else if (distanceToBottom <= 15) {
-      setIsUserScrolledUp(false);
-    }
-  }, []);
-
-  // Detect upward wheel movement immediately
+  // Detect wheel movement: Ctrl/Cmd + Wheel adjusts zoom level directly
   const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
-    if (e.deltaY < -2) {
-      setIsUserScrolledUp(true);
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 5 : -5;
+      const next = Math.max(80, Math.min(150, chatZoom + delta));
+      onZoomChange?.(next);
+      return;
     }
-  }, []);
+  }, [chatZoom, onZoomChange]);
 
-  // Detect upward touch movement
-  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    touchStartYRef.current = e.touches[0].clientY;
-  }, []);
-
-  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    if (touchStartYRef.current !== null) {
-      const delta = e.touches[0].clientY - touchStartYRef.current;
-      if (delta > 8) {
-        setIsUserScrolledUp(true);
-      }
+  // Stable ref callback: avoids detaching/reattaching the scroll listener on
+  // every render (this component re-renders on every streamed token).
+  const setScrollRefs = useCallback((el: HTMLDivElement | null) => {
+    (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+    if (scrollRef && 'current' in scrollRef) {
+      (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
     }
-  }, []);
+  }, [scrollContainerRef, scrollRef]);
 
-  // When user sends a message, snap back to bottom
+  // Streaming text changes (per-token) only ever auto-scroll while following;
+  // they never touch the unseen counter — it's still the same in-flight message.
+  useEffect(() => {
+    if (isStreaming) notifyStreamProgress();
+  }, [streamingText, isStreaming, notifyStreamProgress]);
+
+  // A fully-appended message (in `messages`, not the live stream) is what
+  // actually counts as "new" for the unseen badge and for snap-to-bottom.
   const prevMessagesLength = useRef(messages.length);
+  const prevLastMessageId = useRef<string | undefined>(messages[messages.length - 1]?.id);
+
   useEffect(() => {
-    if (messages.length > prevMessagesLength.current) {
-      const lastMsg = messages[messages.length - 1];
+    const delta = messages.length - prevMessagesLength.current;
+    const lastMsg = messages[messages.length - 1];
+    const lastIdChanged = lastMsg?.id !== prevLastMessageId.current;
+
+    if (delta > 0 && lastIdChanged) {
+      notifyNewMessage(delta);
+      // Snap to bottom on the user's own send, regardless of current scroll position.
       if (lastMsg?.role === 'user') {
-        setIsUserScrolledUp(false);
+        scrollToBottom('smooth');
       }
     }
+
     prevMessagesLength.current = messages.length;
-  }, [messages]);
-
-  // Auto-scroll down when new messages or streaming tokens arrive, unless user has scrolled up
-  useEffect(() => {
-    if (!isUserScrolledUp && scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({
-        top: scrollContainerRef.current.scrollHeight,
-        behavior: isStreaming ? 'auto' : 'smooth',
-      });
-    }
-  }, [messages, streamingText, isStreaming, isUserScrolledUp]);
-
-  const jumpToLatest = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({
-        top: scrollContainerRef.current.scrollHeight,
-        behavior: 'smooth',
-      });
-      setIsUserScrolledUp(false);
-    }
-  };
-
-  const [chatZoom, setChatZoom] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('eris_chat_zoom');
-      return saved ? parseInt(saved, 10) : 100;
-    } catch {
-      return 100;
-    }
-  });
-
-  const handleZoomIn = () => {
-    setChatZoom((prev) => {
-      const next = Math.min(prev + 10, 150);
-      try {
-        localStorage.setItem('eris_chat_zoom', String(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  const handleZoomOut = () => {
-    setChatZoom((prev) => {
-      const next = Math.max(prev - 10, 80);
-      try {
-        localStorage.setItem('eris_chat_zoom', String(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  const handleZoomReset = () => {
-    setChatZoom(100);
-    try {
-      localStorage.setItem('eris_chat_zoom', '100');
-    } catch {}
-  };
+    prevLastMessageId.current = lastMsg?.id;
+  }, [messages, notifyNewMessage, scrollToBottom]);
 
   return (
     <main
@@ -165,66 +122,11 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
         'bg-transparent text-[var(--text-primary)]'
       )}
     >
-      {/* Floating Zoom Controls for Chat */}
-      <div
-        className={cn(
-          'absolute top-3 right-4 z-20 flex items-center gap-1 px-2 py-1 rounded-full border shadow-xs backdrop-blur-md transition-all font-sans',
-          isDarkMode
-            ? 'bg-neutral-900/80 border-white/10 text-neutral-300'
-            : 'bg-white/90 border-slate-200 text-slate-700'
-        )}
-      >
-        <button
-          type="button"
-          onClick={handleZoomOut}
-          disabled={chatZoom <= 80}
-          title="Zoom out chat"
-          className={cn(
-            'cursor-pointer p-1 rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed',
-            isDarkMode ? 'hover:bg-white/10 text-neutral-300' : 'hover:bg-slate-100 text-slate-600'
-          )}
-        >
-          <ZoomOut className="w-3.5 h-3.5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={handleZoomReset}
-          title="Reset chat zoom (100%)"
-          className={cn(
-            'cursor-pointer px-1.5 py-0.5 rounded font-mono text-[11px] font-medium transition-colors',
-            isDarkMode ? 'text-neutral-400 hover:text-white' : 'text-slate-500 hover:text-slate-800'
-          )}
-        >
-          {chatZoom}%
-        </button>
-
-        <button
-          type="button"
-          onClick={handleZoomIn}
-          disabled={chatZoom >= 150}
-          title="Zoom in chat"
-          className={cn(
-            'cursor-pointer p-1 rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed',
-            isDarkMode ? 'hover:bg-white/10 text-neutral-300' : 'hover:bg-slate-100 text-slate-600'
-          )}
-        >
-          <ZoomIn className="w-3.5 h-3.5" />
-        </button>
-      </div>
 
       {/* Scrollable Conversation Container */}
       <div
-        ref={(el) => {
-          (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-          if (scrollRef && 'current' in scrollRef) {
-            (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-          }
-        }}
-        onScroll={handleScroll}
+        ref={setScrollRefs}
         onWheel={handleWheel}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
         className="smooth-scroll relative flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 md:p-8 flex flex-col [overflow-anchor:none]"
       >
         {messages.length === 0 && !isStreaming ? (
@@ -250,19 +152,6 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
                 Quick Actions & System Tools
               </span>
               <div className="flex flex-wrap gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => onOpenModelConfig?.()}
-                  className={cn(
-                    'cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] transition-all shadow-xs font-semibold',
-                    isDarkMode
-                      ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 hover:text-cyan-200'
-                      : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800'
-                  )}
-                >
-                  <Sparkles className="w-4 h-4 text-cyan-400" />
-                  Choose Model
-                </button>
                 <button
                   type="button"
                   onClick={() => onOpenWorkflowBuilder?.()}
@@ -315,12 +204,28 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
                   <Globe className="w-4 h-4 text-cyan-500" />
                   Web Browser
                 </button>
+                {onOpenModelConfig && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenModelConfig()}
+                    className={cn(
+                      'cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] transition-all shadow-xs font-medium',
+                      isDarkMode
+                        ? 'border-white/10 bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/20 text-neutral-300 hover:text-white'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-600 hover:text-slate-800'
+                    )}
+                  >
+                    <Settings2 className="w-4 h-4 text-neutral-400" />
+                    Model Settings
+                  </button>
+                )}
               </div>
             </div>
           </div>
+        ) : (
           <div
             className="max-w-3xl mx-auto w-full flex flex-col gap-6 origin-top transition-transform"
-            style={{ zoom: `${chatZoom}%` }}
+            style={{ transform: `scale(${chatZoom / 100})`, transformOrigin: 'top center' }}
           >
             {messages.map((msg) => (
               <ChatMessageBubble
@@ -359,7 +264,23 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
                           : 'border-slate-200 bg-slate-100 text-slate-700'
                       )}
                     >
-                      <span className={cn('size-1.5 rounded-full shrink-0', activeThinking ? 'bg-amber-400 animate-ping' : 'bg-blue-400 animate-pulse')} />
+                      {/* Static dot + separate ping layer: animate-ping alone fades the
+                          only dot to 0 opacity each cycle, reading as a blink rather
+                          than a steady pulse. */}
+                      <span className="relative flex size-1.5 shrink-0">
+                        <span
+                          className={cn(
+                            'absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping',
+                            activeThinking ? 'bg-amber-400' : 'bg-blue-400'
+                          )}
+                        />
+                        <span
+                          className={cn(
+                            'relative inline-flex size-1.5 rounded-full',
+                            activeThinking ? 'bg-amber-400' : 'bg-blue-400'
+                          )}
+                        />
+                      </span>
                       <span>{formatModelName(activeModel || 'openrouter/auto')}</span>
                     </span>
                     <span className="text-[11px] text-neutral-400 font-mono">
@@ -395,10 +316,10 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
       </div>
 
       {/* Floating Jump to Latest Button */}
-      {isUserScrolledUp && (
+      {!following && (
         <motion.button
           type="button"
-          onClick={jumpToLatest}
+          onClick={() => scrollToBottom('smooth')}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.15 }}
@@ -410,7 +331,12 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
           )}
         >
           <ArrowDown className="h-3.5 w-3.5 shrink-0" />
-          Jump to latest
+          <span>Jump to latest</span>
+          {unseen > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500 text-white leading-tight">
+              {unseen}
+            </span>
+          )}
         </motion.button>
       )}
     </main>

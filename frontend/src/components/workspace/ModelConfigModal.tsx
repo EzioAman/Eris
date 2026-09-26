@@ -12,6 +12,11 @@ import {
   ShieldCheck,
   AlertCircle,
   Zap,
+  Layers,
+  Cpu,
+  Database,
+  Flame,
+  ExternalLink,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Particles } from '../magicui/particles';
@@ -22,6 +27,21 @@ import {
   type FacetedFilter,
 } from '../../../ui_templates/DataTableTemplate';
 
+export const PROVIDER_KEY_LINKS: Record<string, { name: string; url: string }> = {
+  gemini: { name: 'Google AI Studio', url: 'https://aistudio.google.com/app/apikey' },
+  google: { name: 'Google AI Studio', url: 'https://aistudio.google.com/app/apikey' },
+  'google gemini': { name: 'Google AI Studio', url: 'https://aistudio.google.com/app/apikey' },
+  openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/keys' },
+  groq: { name: 'Groq Cloud', url: 'https://console.groq.com/keys' },
+  'groq cloud': { name: 'Groq Cloud', url: 'https://console.groq.com/keys' },
+  openai: { name: 'OpenAI Platform', url: 'https://platform.openai.com/api-keys' },
+  anthropic: { name: 'Anthropic Console', url: 'https://console.anthropic.com/settings/keys' },
+  deepseek: { name: 'DeepSeek Platform', url: 'https://platform.deepseek.com/api_keys' },
+  nvidia: { name: 'NVIDIA NIM', url: 'https://build.nvidia.com/' },
+  'nvidia nim': { name: 'NVIDIA NIM', url: 'https://build.nvidia.com/' },
+  ollama: { name: 'Ollama Official', url: 'https://ollama.com/' },
+};
+
 export interface ModelItem {
   provider: string;
   id: string;
@@ -31,9 +51,21 @@ export interface ModelItem {
   capabilities: string[];
   display?: string;
   context?: string;
+  context_tokens?: number;
+  input_token_limit?: number;
+  output_token_limit?: number;
+  context_tier?: string;
+  modalities?: string[];
+  features?: string[];
   speed?: string;
   status?: string;
   verified?: boolean;
+  recommended?: boolean;
+  recommendation_reason?: string;
+  description?: string;
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
 }
 
 export interface ModelConfigModalProps {
@@ -57,6 +89,22 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
   const [models, setModels] = useState<ModelItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState<string | null>(null);
+  const [activeProviderFilter, setActiveProviderFilter] = useState<string | null>(null);
+
+  const resolveProviderLink = (provName?: string | null) => {
+    if (!provName) return null;
+    const clean = provName.toLowerCase().trim();
+    return (
+      PROVIDER_KEY_LINKS[clean] ||
+      Object.entries(PROVIDER_KEY_LINKS).find(([k]) => clean.includes(k) || k.includes(clean))?.[1] ||
+      null
+    );
+  };
+
+  const currentProviderLink =
+    resolveProviderLink(activeProviderFilter) ||
+    resolveProviderLink(models.find((m) => m.id === activeModel)?.provider) ||
+    PROVIDER_KEY_LINKS.openrouter;
 
   const handleOpenVault = () => {
     onClose();
@@ -128,6 +176,18 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
     return () => clearTimeout(t);
   }, [savedSuccess]);
 
+function formatTokens(num?: number): string {
+  if (!num || num <= 0) return 'N/A';
+  if (num >= 1_000_000) {
+    const val = num / 1_000_000;
+    return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(2)}M`;
+  }
+  if (num >= 1_000) {
+    return `${Math.round(num / 1_000)}k`;
+  }
+  return String(num);
+}
+
   // Columns specification for ReactBits Pro DataTable
   const columns: DataTableColumn<ModelItem>[] = React.useMemo(() => [
     {
@@ -135,10 +195,10 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
       header: 'Model Name',
       sortable: true,
       render: (row) => (
-        <div className="flex flex-col min-w-[160px]">
+        <div className="flex flex-col min-w-[180px] max-w-xs">
           <span
             className={cn(
-              'font-semibold text-xs tracking-tight flex items-center gap-1.5',
+              'font-semibold text-xs tracking-tight flex flex-wrap items-center gap-1.5',
               isDarkMode ? 'text-white' : 'text-slate-900'
             )}
           >
@@ -146,7 +206,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
             {row.id === activeModel && (
               <span
                 className={cn(
-                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono border font-semibold',
+                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono border font-semibold',
                   isDarkMode
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                     : 'bg-emerald-50 text-emerald-700 border-emerald-300'
@@ -155,10 +215,24 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                 Active
               </span>
             )}
+            {row.recommended && (
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono border font-semibold',
+                  isDarkMode
+                    ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                    : 'bg-amber-50 text-amber-700 border-amber-300'
+                )}
+                title={row.recommendation_reason || 'Recommended: Verified free tier with largest token context'}
+              >
+                <Sparkles className="w-3 h-3 text-amber-400" />
+                Recommended
+              </span>
+            )}
             {row.verified && (
               <span
                 className={cn(
-                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono border font-semibold',
+                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono border font-semibold',
                   isDarkMode
                     ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
                     : 'bg-blue-50 text-blue-700 border-blue-300'
@@ -172,12 +246,24 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
           </span>
           <span
             className={cn(
-              'text-xs font-mono truncate mt-0.5',
+              'text-[11px] font-mono truncate mt-0.5',
               isDarkMode ? 'text-neutral-400' : 'text-slate-500'
             )}
+            title={row.id}
           >
             {row.id}
           </span>
+          {row.description && (
+            <span
+              className={cn(
+                'text-[10px] truncate mt-0.5',
+                isDarkMode ? 'text-neutral-400' : 'text-slate-500'
+              )}
+              title={row.description}
+            >
+              {row.description}
+            </span>
+          )}
         </div>
       ),
     },
@@ -189,7 +275,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
       render: (row) => (
         <span
           className={cn(
-            'text-xs font-medium px-2 py-0.5 rounded-md border',
+            'text-xs font-medium px-2 py-0.5 rounded-md border inline-block whitespace-nowrap',
             isDarkMode
               ? 'border-white/10 bg-white/5 text-neutral-300'
               : 'border-slate-200 bg-slate-100 text-slate-700'
@@ -200,56 +286,116 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
       ),
     },
     {
-      id: 'capabilities',
-      header: 'Capabilities',
-      render: (row) => (
-        <div className="flex flex-wrap gap-1 max-w-xs">
-          {row.capabilities?.map((cap) => (
-            <span
-              key={cap}
-              className={cn(
-                'text-xs font-medium px-1.5 py-0.5 rounded border',
-                cap === 'Free'
-                  ? isDarkMode ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : cap === 'Reasoning'
-                  ? isDarkMode ? 'border-purple-500/30 bg-purple-500/10 text-purple-300' : 'border-purple-200 bg-purple-50 text-purple-700'
-                  : cap === 'Coding'
-                  ? isDarkMode ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : 'border-blue-200 bg-blue-50 text-blue-700'
-                  : cap === 'Vision'
-                  ? isDarkMode ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300' : 'border-cyan-200 bg-cyan-50 text-cyan-700'
-                  : cap === 'Audio'
-                  ? isDarkMode ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300' : 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                  : isDarkMode ? 'border-white/10 bg-white/5 text-neutral-300' : 'border-slate-200 bg-slate-100 text-slate-600'
+      id: 'context',
+      header: 'Token Context Window',
+      accessorKey: 'context_tokens',
+      sortable: true,
+      render: (row) => {
+        const isMegaContext = (row.context_tokens || 0) >= 1_000_000 || (row.context || '').includes('1M');
+        const formattedContext = row.context || (row.context_tokens ? `${formatTokens(row.context_tokens)} tokens` : 'Standard Context');
+        return (
+          <div className="flex flex-col min-w-[160px]">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  'text-xs font-mono font-semibold',
+                  isMegaContext
+                    ? isDarkMode ? 'text-purple-300 font-bold' : 'text-purple-700 font-bold'
+                    : isDarkMode ? 'text-neutral-200' : 'text-slate-800'
+                )}
+              >
+                {formattedContext}
+              </span>
+              {isMegaContext && (
+                <span
+                  className={cn(
+                    'text-[10px] font-mono px-1 py-0.2 rounded border font-bold uppercase tracking-wider shrink-0',
+                    isDarkMode
+                      ? 'border-purple-500/40 bg-purple-500/15 text-purple-300'
+                      : 'border-purple-300 bg-purple-100 text-purple-800'
+                  )}
+                >
+                  1M+
+                </span>
               )}
-            >
-              {cap}
-            </span>
-          ))}
-        </div>
-      ),
+            </div>
+            {(row.input_token_limit || row.output_token_limit) ? (
+              <span
+                className={cn(
+                  'text-[10px] font-mono mt-0.5',
+                  isDarkMode ? 'text-neutral-400' : 'text-slate-500'
+                )}
+              >
+                In: {formatTokens(row.input_token_limit)} • Out: {formatTokens(row.output_token_limit)}
+              </span>
+            ) : null}
+            {row.features?.includes('Prompt Caching') && (
+              <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-0.5 mt-0.5">
+                <Zap className="w-2.5 h-2.5" />
+                Prompt Caching
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     {
-      id: 'price',
-      header: 'Pricing',
-      accessorKey: 'price',
-      sortable: true,
-      render: (row) => (
-        <span
-          className={cn(
-            'text-xs font-mono',
-            row.price?.toLowerCase().includes('free') || row.price?.includes('$0.00')
-              ? isDarkMode ? 'text-emerald-400 font-semibold' : 'text-emerald-600 font-semibold'
-              : isDarkMode ? 'text-neutral-400' : 'text-slate-500'
-          )}
-        >
-          {row.price || 'Pay per token'}
-        </span>
-      ),
+      id: 'capabilities',
+      header: 'Capabilities & Modalities',
+      render: (row) => {
+        const caps = row.capabilities || [];
+        const extraMods = (row.modalities || []).filter(
+          (m) => !caps.includes(m) && m.toLowerCase() !== 'text'
+        );
+        const combined = [...caps, ...extraMods];
+        const visible = combined.slice(0, 3);
+        const hiddenCount = combined.length - visible.length;
+
+        return (
+          <div className="flex items-center gap-1.5 min-w-[200px] max-w-[280px]">
+            {visible.map((cap) => (
+              <span
+                key={cap}
+                className={cn(
+                  'text-[11px] font-medium px-2 py-0.5 rounded-md border whitespace-nowrap shadow-2xs',
+                  cap === 'Free'
+                    ? isDarkMode ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300 font-semibold' : 'border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold'
+                    : cap === 'Reasoning'
+                    ? isDarkMode ? 'border-purple-500/40 bg-purple-500/15 text-purple-300' : 'border-purple-300 bg-purple-50 text-purple-700'
+                    : cap === 'Coding'
+                    ? isDarkMode ? 'border-blue-500/40 bg-blue-500/15 text-blue-300' : 'border-blue-300 bg-blue-50 text-blue-700'
+                    : cap === 'Vision'
+                    ? isDarkMode ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-300' : 'border-cyan-300 bg-cyan-50 text-cyan-700'
+                    : cap === 'Audio'
+                    ? isDarkMode ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-300' : 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                    : isDarkMode ? 'border-white/10 bg-white/5 text-neutral-300' : 'border-slate-200 bg-slate-100 text-slate-600'
+                )}
+              >
+                {cap}
+              </span>
+            ))}
+            {hiddenCount > 0 && (
+              <span
+                title={combined.slice(3).join(', ')}
+                className={cn(
+                  'text-[10px] font-mono px-1.5 py-0.5 rounded border font-semibold cursor-help whitespace-nowrap',
+                  isDarkMode
+                    ? 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
+                    : 'border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200'
+                )}
+              >
+                +{hiddenCount}
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     {
       id: 'action',
       header: 'Action',
       hideable: false,
+      className: 'w-[140px] min-w-[140px] text-right shrink-0',
       render: (row) => {
         const isActive = row.id === activeModel;
         return (
@@ -257,7 +403,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
             type="button"
             onClick={() => handleSelectModel(row.id)}
             className={cn(
-              'cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-2xs',
+              'cursor-pointer inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-2xs whitespace-nowrap min-w-[110px]',
               isActive
                 ? isDarkMode
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold'
@@ -283,53 +429,84 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
 
   // Dynamically derive faceted filter options from actual live fetched models
   const facetedFilters: FacetedFilter[] = React.useMemo(() => {
+    const filters: FacetedFilter[] = [];
+
+    // 1. Token Size Filter
+    filters.push({
+      id: 'token_size',
+      title: 'Token Size',
+      options: [
+        { label: '1M+ Tokens (Ultra-Long)', value: '1M+', icon: Layers },
+        { label: '128k - 1M Tokens (Large)', value: '128k - 1M', icon: Cpu },
+        { label: '32k - 128k Tokens (Standard)', value: '32k - 128k', icon: Database },
+        { label: '< 32k Tokens', value: '< 32k', icon: Zap },
+      ],
+      filterFn: (row, selected) => {
+        const tokens = row.context_tokens || (row.context?.includes('1M') ? 1048576 : 128000);
+        return selected.some((s) => {
+          if (s === '1M+') return tokens >= 1_000_000;
+          if (s === '128k - 1M') return tokens >= 128_000 && tokens < 1_000_000;
+          if (s === '32k - 128k') return tokens >= 32_000 && tokens < 128_000;
+          if (s === '< 32k') return tokens < 32_000;
+          return true;
+        });
+      },
+    });
+
+    // 2. Provider Filter
     const uniqueProviders = Array.from(
       new Set(models.map((m) => m.provider).filter(Boolean))
     ).sort();
+    if (uniqueProviders.length > 0) {
+      filters.push({
+        id: 'provider',
+        title: 'Provider',
+        options: uniqueProviders.map((p) => ({ label: p, value: p })),
+        filterFn: (row, selected) => selected.includes(row.provider),
+      });
+    }
 
-    const providerOptions = uniqueProviders.map((p) => ({
-      label: p,
-      value: p,
-    }));
-
-    const uniqueCaps = Array.from(
-      new Set(models.flatMap((m) => m.capabilities || []).filter(Boolean))
+    // 3. Capabilities & Features Filter
+    const allTags = Array.from(
+      new Set(models.flatMap((m) => [
+        ...(m.capabilities || []),
+        ...(m.features || []),
+        ...(m.modalities || []).filter((mod) => mod.toLowerCase() !== 'text'),
+      ]).filter(Boolean))
     ).sort();
 
-    const capIconMap: Record<string, any> = {
+    const tagIconMap: Record<string, any> = {
       Free: Sparkles,
       Coding: Code2,
       Reasoning: Brain,
       Vision: Eye,
       Audio: Zap,
+      'Prompt Caching': Flame,
+      'Batch Generation': Layers,
+      Image: Eye,
+      Video: Eye,
     };
 
-    const capabilityOptions = uniqueCaps.map((c) => ({
-      label: c,
-      value: c,
-      icon: capIconMap[c],
-    }));
-
-    const filters: FacetedFilter[] = [];
-    if (providerOptions.length > 0) {
-      filters.push({
-        id: 'provider',
-        title: 'Provider',
-        options: providerOptions,
-        filterFn: (row, selected) => selected.includes(row.provider),
-      });
-    }
-    if (capabilityOptions.length > 0) {
+    if (allTags.length > 0) {
       filters.push({
         id: 'capabilities',
-        title: 'Capabilities',
-        options: capabilityOptions,
+        title: 'Capabilities & Features',
+        options: allTags.map((c) => ({
+          label: c,
+          value: c,
+          icon: tagIconMap[c] || Sparkles,
+        })),
         filterFn: (row, selected) => {
-          const caps = row.capabilities || [];
-          return selected.every((s) => caps.includes(s));
+          const rowTags = [
+            ...(row.capabilities || []),
+            ...(row.features || []),
+            ...(row.modalities || []),
+          ];
+          return selected.every((s) => rowTags.includes(s));
         },
       });
     }
+
     return filters;
   }, [models]);
 
@@ -337,7 +514,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md select-none font-sans">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md select-none font-sans">
         {/* Backdrop click */}
         <div className="absolute inset-0" onClick={onClose} />
 
@@ -347,7 +524,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
           exit={{ opacity: 0, scale: 0.95, y: 12 }}
           transition={{ duration: 0.25, ease: 'easeOut' }}
           className={cn(
-            'w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-3xl border relative z-10 flex flex-col dashboard-modal-glow',
+            'w-full max-w-[1360px] w-[95vw] max-h-[92vh] overflow-hidden rounded-3xl border relative z-10 flex flex-col dashboard-modal-glow',
             isDarkMode
               ? 'border-violet-500/30 bg-[#06080F]/90 backdrop-blur-3xl text-white shadow-2xl'
               : 'border-slate-200 bg-white/95 backdrop-blur-3xl text-slate-900 shadow-2xl'
@@ -467,6 +644,50 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                 </span>
               )}
             </div>
+
+            {/* Live Catalog Metrics */}
+            <div className="flex items-center gap-2 font-mono text-[11px]">
+              <span
+                className={cn(
+                  'px-2 py-0.5 rounded-md border font-semibold flex items-center gap-1',
+                  isDarkMode
+                    ? 'border-white/10 bg-white/5 text-neutral-300'
+                    : 'border-slate-200 bg-slate-100 text-slate-700'
+                )}
+                title="Total verified models available"
+              >
+                <span>Total:</span>
+                <strong>{models.length}</strong>
+              </span>
+
+              <span
+                className={cn(
+                  'px-2 py-0.5 rounded-md border font-semibold flex items-center gap-1',
+                  isDarkMode
+                    ? 'border-purple-500/30 bg-purple-500/10 text-purple-300'
+                    : 'border-purple-200 bg-purple-50 text-purple-800'
+                )}
+                title="Models with 1 Million+ token context window"
+              >
+                <Layers className="w-3 h-3 text-purple-400" />
+                <span>1M+ Context:</span>
+                <strong>{models.filter((m) => (m.context_tokens || 0) >= 1_000_000 || (m.context || '').includes('1M')).length}</strong>
+              </span>
+
+              <span
+                className={cn(
+                  'px-2 py-0.5 rounded-md border font-semibold flex items-center gap-1',
+                  isDarkMode
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                )}
+                title="Free tier models"
+              >
+                <Sparkles className="w-3 h-3 text-emerald-400" />
+                <span>Free Tier:</span>
+                <strong>{models.filter((m) => m.capabilities?.includes('Free')).length}</strong>
+              </span>
+            </div>
           </div>
 
           {/* Success Banner */}
@@ -523,14 +744,31 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
               columns={columns}
               data={models}
               keyField="id"
-              searchPlaceholder="Filter models by name, provider, or capability..."
+              searchPlaceholder="Search by model, provider, token capacity (1M, 128k), or capability..."
+              searchKey={(row) => [
+                row.name,
+                row.id,
+                row.provider,
+                row.context,
+                row.context_tier,
+                ...(row.capabilities || []),
+                ...(row.features || []),
+                ...(row.modalities || []),
+                row.speed,
+              ].filter(Boolean).join(' ')}
               facetedFilters={facetedFilters}
               selectable={false}
               pageSize={8}
               isDarkMode={isDarkMode}
+              onFilterChange={(filters) => {
+                const provs = filters.provider || [];
+                setActiveProviderFilter(provs.length > 0 ? provs[0] : null);
+              }}
               emptyMessage={
                 isLoading
                   ? 'Verifying keys & discovering models...'
+                  : activeProviderFilter
+                  ? `No models match the filter. Don't have an API key for ${activeProviderFilter}? Get it here: ${resolveProviderLink(activeProviderFilter)?.url || 'https://openrouter.ai/keys'}`
                   : 'No models match the filter. Enter your API key in Key Vault to verify and unlock models.'
               }
             />
@@ -539,22 +777,45 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
           {/* Modal Footer / Confirm Action */}
           <div
             className={cn(
-              "p-4 border-t flex items-center justify-between z-10",
+              "p-4 border-t flex flex-wrap items-center justify-between gap-3 z-10",
               isDarkMode
                 ? "border-white/10 bg-black/50 backdrop-blur-md"
                 : "border-slate-200/80 bg-slate-50/90 backdrop-blur-md"
             )}
           >
-            <div className={cn("text-xs flex items-center gap-1.5", isDarkMode ? "text-neutral-400" : "text-slate-500")}>
-              <span>Active Selection:</span>
-              {activeModel ? (
-                <strong className={cn("font-mono", isDarkMode ? "text-emerald-400" : "text-emerald-600")}>
-                  {activeModel}
-                </strong>
-              ) : (
-                <strong className={cn("font-mono", isDarkMode ? "text-amber-400" : "text-amber-600")}>
-                  None Selected
-                </strong>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className={cn("text-xs flex items-center gap-1.5", isDarkMode ? "text-neutral-400" : "text-slate-500")}>
+                <span>Active Selection:</span>
+                {activeModel ? (
+                  <strong className={cn("font-mono", isDarkMode ? "text-emerald-400" : "text-emerald-600")}>
+                    {activeModel}
+                  </strong>
+                ) : (
+                  <strong className={cn("font-mono", isDarkMode ? "text-amber-400" : "text-amber-600")}>
+                    None Selected
+                  </strong>
+                )}
+              </div>
+
+              {/* Dynamic Key Acquisition Link */}
+              {currentProviderLink && (
+                <div className="flex items-center gap-1 text-xs">
+                  <span className={isDarkMode ? "text-neutral-400" : "text-slate-500"}>
+                    Don't have a key? get it here-
+                  </span>
+                  <a
+                    href={currentProviderLink.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "font-semibold underline inline-flex items-center gap-1 transition-colors",
+                      isDarkMode ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"
+                    )}
+                  >
+                    <span>{currentProviderLink.url}</span>
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  </a>
+                </div>
               )}
             </div>
             {onConfirmWorkspace && (

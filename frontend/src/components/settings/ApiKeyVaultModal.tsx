@@ -11,8 +11,10 @@ import {
   AlertCircle,
   X,
   ArrowRight,
+  ExternalLink,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { PROVIDER_KEY_LINKS } from '../workspace/ModelConfigModal';
 
 export interface KeyItem {
   id: string;
@@ -35,15 +37,15 @@ export interface ApiKeyVaultModalProps {
 }
 
 const PROVIDERS = [
-  { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini/gemini-2.5-flash', placeholder: 'AIzaSy...', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
-  { id: 'openrouter', name: 'OpenRouter', defaultModel: 'openrouter/anthropic/claude-3.5-sonnet', placeholder: 'sk-or-v1-...', defaultBaseUrl: 'https://openrouter.ai/api/v1' },
-  { id: 'groq', name: 'Groq Cloud', defaultModel: 'groq/llama-3.3-70b-versatile', placeholder: 'gsk_...', defaultBaseUrl: 'https://api.groq.com/openai/v1' },
-  { id: 'openai', name: 'OpenAI', defaultModel: 'openai/gpt-4o', placeholder: 'sk-proj-...', defaultBaseUrl: 'https://api.openai.com/v1' },
-  { id: 'anthropic', name: 'Anthropic', defaultModel: 'anthropic/claude-3-5-sonnet', placeholder: 'sk-ant-...', defaultBaseUrl: 'https://api.anthropic.com/v1' },
-  { id: 'deepseek', name: 'DeepSeek', defaultModel: 'deepseek/deepseek-chat', placeholder: 'sk-...', defaultBaseUrl: 'https://api.deepseek.com/v1' },
-  { id: 'nvidia', name: 'Nvidia NIM', defaultModel: 'nvidia/meta/llama-3.3-70b-instruct', placeholder: 'nvapi-...', defaultBaseUrl: 'https://integrate.api.nvidia.com/v1' },
-  { id: 'ollama', name: 'Ollama (Local)', defaultModel: 'ollama/llama3.2', placeholder: 'ollama-local', defaultBaseUrl: 'http://localhost:11434/v1' },
-  { id: 'custom', name: 'Custom OpenAI-Compatible', defaultModel: '', placeholder: 'Bearer key...', defaultBaseUrl: 'http://localhost:8000/v1' },
+  { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini/gemini-3-flash-preview', placeholder: 'AIzaSy...', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta', link: 'https://aistudio.google.com/app/apikey' },
+  { id: 'openrouter', name: 'OpenRouter', defaultModel: 'openrouter/auto', placeholder: 'sk-or-v1-...', defaultBaseUrl: 'https://openrouter.ai/api/v1', link: 'https://openrouter.ai/keys' },
+  { id: 'groq', name: 'Groq Cloud', defaultModel: 'groq/llama-3.3-70b-versatile', placeholder: 'gsk_...', defaultBaseUrl: 'https://api.groq.com/openai/v1', link: 'https://console.groq.com/keys' },
+  { id: 'openai', name: 'OpenAI', defaultModel: 'openai/gpt-4o', placeholder: 'sk-proj-...', defaultBaseUrl: 'https://api.openai.com/v1', link: 'https://platform.openai.com/api-keys' },
+  { id: 'anthropic', name: 'Anthropic', defaultModel: 'anthropic/claude-3-5-sonnet', placeholder: 'sk-ant-...', defaultBaseUrl: 'https://api.anthropic.com/v1', link: 'https://console.anthropic.com/settings/keys' },
+  { id: 'deepseek', name: 'DeepSeek', defaultModel: 'deepseek/deepseek-chat', placeholder: 'sk-...', defaultBaseUrl: 'https://api.deepseek.com/v1', link: 'https://platform.deepseek.com/api_keys' },
+  { id: 'nvidia', name: 'Nvidia NIM', defaultModel: 'nvidia/meta/llama-3.3-70b-instruct', placeholder: 'nvapi-...', defaultBaseUrl: 'https://integrate.api.nvidia.com/v1', link: 'https://build.nvidia.com/' },
+  { id: 'ollama', name: 'Ollama (Local)', defaultModel: 'ollama/llama3.2', placeholder: 'ollama-local', defaultBaseUrl: 'http://localhost:11434/v1', link: 'https://ollama.com/' },
+  { id: 'custom', name: 'Custom OpenAI-Compatible', defaultModel: '', placeholder: 'Bearer key...', defaultBaseUrl: 'http://localhost:8000/v1', link: '' },
 ];
 
 export const ApiKeyVaultModal: React.FC<ApiKeyVaultModalProps> = ({
@@ -64,7 +66,7 @@ export const ApiKeyVaultModal: React.FC<ApiKeyVaultModalProps> = ({
   const [provider, setProvider] = useState('gemini');
   const [label, setLabel] = useState('');
   const [rawKey, setRawKey] = useState('');
-  const [modelName, setModelName] = useState('gemini/gemini-2.5-flash');
+  const [modelName, setModelName] = useState('gemini/gemini-3-flash-preview');
   const [baseUrl, setBaseUrl] = useState('https://generativelanguage.googleapis.com/v1beta');
   const [showKey, setShowKey] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -337,7 +339,7 @@ export const ApiKeyVaultModal: React.FC<ApiKeyVaultModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. gemini/gemini-2.5-flash"
+                    placeholder="e.g. gemini/gemini-3-flash-preview or openrouter/auto"
                     value={modelName}
                     onChange={(e) => setModelName(e.target.value)}
                     className="w-full h-9 rounded-lg bg-[var(--bg-input)] border border-[var(--border-workspace)] px-2.5 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 outline-none focus:border-[var(--accent-primary)]"
@@ -357,6 +359,22 @@ export const ApiKeyVaultModal: React.FC<ApiKeyVaultModalProps> = ({
                   />
                 </div>
               </div>
+
+              {/* Dynamic Provider Key Link */}
+              {PROVIDER_KEY_LINKS[provider] && (
+                <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] pt-1 pb-1">
+                  <span>Don't have a key? get it here-</span>
+                  <a
+                    href={PROVIDER_KEY_LINKS[provider].url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-[var(--accent-primary)] hover:underline inline-flex items-center gap-1"
+                  >
+                    <span>{PROVIDER_KEY_LINKS[provider].url}</span>
+                    <ExternalLink className="size-3" />
+                  </a>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button

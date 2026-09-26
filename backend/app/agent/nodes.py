@@ -7,11 +7,13 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.types import interrupt
+from langgraph.config import get_stream_writer
 
 try:
-    from app.agent.llm_client import acompletion, _infer_provider, _resolve_api_key
+    from app.agent.llm_client import astream_completion, _infer_provider, _resolve_api_key
     from app.agent.prompts import (
         IntentType,
+        PromptBuilder,
         build_system_prompt,
         classify_intent,
         is_credential_extraction_attempt,
@@ -24,10 +26,12 @@ try:
     from app.services.rag_service import rag_vault
     from app.services.vault_service import get_dynamic_vault_fallbacks
     from app.database import db_manager
+    from app.agent.spooler import spool_large_output
 except ImportError:
-    from backend.app.agent.llm_client import acompletion, _infer_provider, _resolve_api_key
+    from backend.app.agent.llm_client import astream_completion, _infer_provider, _resolve_api_key
     from backend.app.agent.prompts import (
         IntentType,
+        PromptBuilder,
         build_system_prompt,
         classify_intent,
         is_credential_extraction_attempt,
@@ -40,8 +44,103 @@ except ImportError:
     from backend.app.services.rag_service import rag_vault
     from backend.app.services.vault_service import get_dynamic_vault_fallbacks
     from backend.app.database import db_manager
+    from backend.app.agent.spooler import spool_large_output
 
 logger = logging.getLogger("eris.agent.nodes")
+
+# --- RAG vault gating ---------------------------------------------------
+# Vault retrieval exists to surface the user's OWN learned history/preferences
+# ("what does the vault already know that's relevant here") - it is not meant
+# to fire on every routine dev instruction the agent can satisfy directly with
+# read_file/grep_search/run_command. The old gate only checked intent + a
+# 3-character length floor, so nearly every ACTION_EXECUTE/READ_INSPECTION
+# turn triggered a live embedding call regardless of whether the vault could
+# plausibly help.
+
+# Leading verbs that signal a short, direct dev command rather than a question
+# that benefits from recalled context - "check X", "run Y", "fix Z", etc.
+_TRIVIAL_ACTION_VERBS = {
+    "check", "run", "fix", "read", "view", "list", "show", "print",
+    "debug", "test", "build", "compile", "restart", "stop", "start",
+    "delete", "remove", "rename", "move", "copy", "grep", "search",
+    "open", "close", "install", "update", "revert", "undo", "add",
+}
+
+_RAG_MIN_CHARS = 40  # below this, a message is almost always a direct command, not a question
+_RAG_MIN_WORDS_FOR_TRIVIAL_VERB = 12  # a trivial-verb sentence must be fairly long to still qualify
+
+# In-memory, per-process cache of recent vault lookups so re-sending a similar
+# instruction within the same session (e.g. during a multi-step debugging back
+# -and-forth) doesn't re-trigger a live embedding call each time.
+_rag_cache: Dict[str, tuple[float, str]] = {}
+_RAG_CACHE_TTL_SECONDS = 600.0
+_RAG_CACHE_MAX_ENTRIES = 256
+
+
+def _should_run_rag(
+    intent: "IntentType",
+    last_human_text: str,
+    turn_count: int,
+    read_file_count: int,
+) -> bool:
+    """
+    Gate for expensive RAG vault retrieval (one live embedding call per hit).
+    Runs only when ALL of:
+
+      1. This is the first reasoning pass of the turn (turn_count == 1).
+         Once the agent has already pulled tool results into context on a
+         later iteration of the same turn, re-querying the vault again adds
+         nothing - the relevant context is already in the message history.
+      2. No file has already been read this turn (read_file_count == 0).
+         A file just read into context IS the relevant context; the vault
+         rarely adds more than that.
+      3. Intent suggests this could plausibly benefit from persisted
+         knowledge (action/workflow/swarm) rather than a bare read.
+      4. The message reads like a real question or request, not a short
+         imperative dev command - filtered by length and leading verb.
+    """
+    if turn_count != 1 or read_file_count > 0:
+        return False
+    if intent not in (
+        IntentType.ACTION_EXECUTE,
+        IntentType.WORKFLOW_ORCHESTRATION,
+        IntentType.MULTI_AGENT_SWARM,
+    ):
+        return False
+
+    text = (last_human_text or "").strip()
+    if len(text) < _RAG_MIN_CHARS:
+        return False
+
+    first_word = text.split(" ", 1)[0].strip(",.:;!?").lower()
+    if first_word in _TRIVIAL_ACTION_VERBS and len(text.split()) < _RAG_MIN_WORDS_FOR_TRIVIAL_VERB:
+        return False
+
+    return True
+
+
+def _rag_cache_key(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
+
+
+async def _fetch_rag_cached(query: str) -> str:
+    """Wraps rag_vault.search_rag_context with a short-TTL in-memory cache so
+    repeated/near-identical queries within a session don't re-embed each time."""
+    key = _rag_cache_key(query)
+    now = time.time()
+    cached = _rag_cache.get(key)
+    if cached and (now - cached[0]) < _RAG_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    result = await asyncio.to_thread(rag_vault.search_rag_context, query, 2)
+
+    if len(_rag_cache) >= _RAG_CACHE_MAX_ENTRIES:
+        oldest_key = min(_rag_cache, key=lambda k: _rag_cache[k][0])
+        _rag_cache.pop(oldest_key, None)
+    _rag_cache[key] = (now, result)
+    return result
+# --------------------------------------------------------------------------
 
 
 def _convert_messages_for_llm(system_prompt: str, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
@@ -81,8 +180,6 @@ def _convert_messages_for_llm(system_prompt: str, messages: List[BaseMessage]) -
             llm_msgs.append(m_dict)
         elif isinstance(msg, ToolMessage):
             c_str = str(msg.content)
-            if len(c_str) > 1200:
-                c_str = c_str[:600] + "\n... [Output pruned to prevent context overflow] ...\n" + c_str[-500:]
             llm_msgs.append({
                 "role": "tool",
                 "tool_call_id": msg.tool_call_id,
@@ -152,7 +249,7 @@ def format_user_friendly_error(error: Any, model_name: str = "") -> str:
 
 def _extract_thought_content(raw_text: str, reasoning_content: Optional[str] = None) -> tuple[str, str]:
     """
-    Extracts reasoning enclosed in <think>, <thought>, <thinking>, <reasoning>, [THINKING] tags,
+    Extracts reasoning enclosed in <think>, <thought>, <thinking>, <reasoning> tags,
     as well as provider reasoning_content and unclosed think tags.
     Returns (thought_text, user_facing_content).
     """
@@ -277,7 +374,12 @@ def _parse_embedded_tool_calls(raw_text: str) -> tuple[List[Dict[str, Any]], str
         for kv in kv_pattern.finditer(body):
             k = kv.group(1).strip()
             v = kv.group(2).strip()
-            if v.isdigit():
+            if (v.startswith("{") and v.endswith("}")) or (v.startswith("[") and v.endswith("]")):
+                try:
+                    v = json.loads(v)
+                except Exception:
+                    pass
+            elif v.isdigit():
                 v = int(v)
             elif v.lower() == "true":
                 v = True
@@ -312,13 +414,37 @@ def _parse_embedded_tool_calls(raw_text: str) -> tuple[List[Dict[str, Any]], str
     return tool_calls, clean
 
 
+async def _run_streamed_completion(
+    writer,
+    **completion_kwargs,
+):
+    """
+    Drives astream_completion, forwarding live token/reasoning deltas to the frontend
+    via the LangGraph stream writer as they arrive, and returns the final LLMResponse
+    once the stream completes. Raises whatever astream_completion raises on failure
+    (no partial response is returned on error).
+    """
+    final_response = None
+    async for event in astream_completion(**completion_kwargs):
+        ev_type = event.get("type")
+        if ev_type == "content_delta":
+            writer({"type": "chunk", "text": event.get("text", "")})
+        elif ev_type == "reasoning_delta":
+            writer({"type": "thought", "text": event.get("text", "")})
+        elif ev_type == "final":
+            final_response = event.get("response")
+    return final_response
+
 
 async def reasoner_node(state: AgentState) -> Dict[str, Any]:
     """
     Primary reasoning node of Eris.
     Synthesizes conversational history, learned user habits, and available tools.
     Invokes the user-selected model directly with no hardcoded fallback loops.
+    Streams live token/reasoning deltas to the frontend as the model responds.
     """
+    writer = get_stream_writer()
+
     messages = list(state.get("messages", []))
     active_model = state.get("active_model")
     if not active_model:
@@ -355,19 +481,41 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
             "active_model": active_model,
         }
 
-    intent = classify_intent(last_human_text) if last_human_text else IntentType.CONVERSATION
+    # 2. Semantic tool retrieval and dynamic orchestration depth
+    # get_relevant_tools() makes a live embedding call for the query itself (in
+    # addition to the tool-embedding cache), so it's offloaded to a thread to
+    # avoid blocking the event loop for every other in-flight request each turn.
+    lc_tools = await asyncio.to_thread(get_relevant_tools, last_human_text, 8) if last_human_text else []
 
-    # Prepare tools dynamically via fast in-memory ranking
-    if intent == IntentType.CONVERSATION:
-        lc_tools = []
+    # Bind render_ui alongside active tools so Eris can declare visual intent (diff, terminal, tree) whenever helpful
+    render_ui_tool = next((t for t in get_langchain_tools() if t.name == "render_ui"), None)
+    if lc_tools and render_ui_tool and not any(t.name == "render_ui" for t in lc_tools):
+        lc_tools.append(render_ui_tool)
+
+    candidate_names = [t.name for t in lc_tools]
+
+    if not candidate_names:
+        intent = IntentType.CONVERSATION
         tool_schemas = []
     else:
-        lc_tools = get_relevant_tools(query=last_human_text, top_k=8)
+        # Check explicit swarm / workflow triggers first
+        low_text = last_human_text.lower().strip()
+        if any(k in low_text for k in (
+            "multi agent", "multi-agent", "spawn agent", "spawn agents",
+            "break the system", "security audit", "parallel agents", "swarm",
+            "penetration test", "adversarial test"
+        )):
+            intent = IntentType.MULTI_AGENT_SWARM
+        elif any(k in low_text for k in ("run workflow", "trigger workflow", "execute pipeline", "start workflow")):
+            intent = IntentType.WORKFLOW_ORCHESTRATION
+        else:
+            intent = PromptBuilder.infer_orchestration_depth(candidate_names, query=last_human_text)
+
         tool_schemas = [convert_to_openai_tool(t) for t in lc_tools]
 
-    # For read/inspection queries, restrict tools strictly to read operations (never run_command)
+    # For read/inspection queries, restrict tools strictly to read operations + render_ui (never run_command)
     if intent == IntentType.READ_INSPECTION:
-        inspection_tools = {"read_file", "view_file", "list_dir", "grep_search"}
+        inspection_tools = {"read_file", "view_file", "list_dir", "grep_search", "search_knowledge_vault", "render_ui"}
         tool_schemas = [s for s in tool_schemas if s.get("function", {}).get("name") in inspection_tools]
 
     # Find messages belonging only to the current turn (since the latest HumanMessage)
@@ -427,17 +575,18 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
     pre_prep_start = time.perf_counter()
     provider, sub_model = _infer_provider(active_model)
 
-    should_run_rag = (
-        intent in (IntentType.READ_INSPECTION, IntentType.ACTION_EXECUTE, IntentType.WORKFLOW_ORCHESTRATION, IntentType.MULTI_AGENT_SWARM)
-        and last_human_text
-        and len(last_human_text.strip()) > 3
+    should_run_rag = last_human_text and _should_run_rag(
+        intent=intent,
+        last_human_text=last_human_text,
+        turn_count=turn_count,
+        read_file_count=read_file_count,
     )
 
     async def _fetch_rag() -> str:
         if not should_run_rag:
             return ""
         try:
-            return await asyncio.to_thread(rag_vault.search_rag_context, last_human_text, 2)
+            return await _fetch_rag_cached(last_human_text)
         except Exception as e:
             logger.debug(f"RAG pre-retrieval skipped: {e}")
             return ""
@@ -497,11 +646,13 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
 
     llm_start = time.perf_counter()
     try:
-        response = await acompletion(
+        response = await _run_streamed_completion(
+            writer,
             model=active_model,
             messages=llm_messages,
             tools=tools_to_pass,
             temperature=0.2 if execution_mode == "speed" else 0.4,
+            enable_thinking=(execution_mode == "accuracy"),
             max_tokens=4096,
             api_key=resolved_api_key,
             base_url=resolved_base_url,
@@ -529,11 +680,13 @@ async def reasoner_node(state: AgentState) -> Dict[str, Any]:
             cand_prov, cand_sub = _infer_provider(cand_model)
             cand_key, cand_url = await _resolve_api_key(cand_prov, cand_sub)
             try:
-                response = await acompletion(
+                response = await _run_streamed_completion(
+                    writer,
                     model=cand_model,
                     messages=llm_messages,
                     tools=tools_to_pass,
                     temperature=0.2 if execution_mode == "speed" else 0.4,
+                    enable_thinking=(execution_mode == "accuracy"),
                     max_tokens=4096,
                     api_key=cand_key,
                     base_url=cand_url,
@@ -659,7 +812,7 @@ async def tool_runner_node(state: AgentState) -> Dict[str, Any]:
     for tc in last_msg.tool_calls:
         tool_name = tc.get("name", "")
         tool_args = tc.get("args", {})
-        
+
         # De-duplicate repetitive identical tool calls (e.g. models emitting open_browser 20 times)
         sig = (tool_name, json.dumps(tool_args, sort_keys=True) if isinstance(tool_args, dict) else str(tool_args))
         if sig in seen_calls and tool_name in ("open_browser", "play_youtube_song", "search_web"):
@@ -683,15 +836,14 @@ async def tool_runner_node(state: AgentState) -> Dict[str, Any]:
             output = execute_tool(tool_name, tool_args)
             out_str = scrub_sensitive_credentials(str(output))
 
-        # Best practice token optimization: truncate massive dumps to conserve tokens
-        if len(out_str) > 1800:
-            llm_content = (
-                f"{out_str[:900]}\n\n"
-                f"... [TRUNCATED {len(out_str) - 1500} characters to optimize tokens. Full output saved in workspace] ...\n\n"
-                f"{out_str[-600:]}"
-            )
-        else:
-            llm_content = out_str
+        # Spool large outputs to disk artifacts to prevent context flooding while preserving 100% data fidelity
+        session_id = state.get("session_id", "default_session")
+        is_spooled, llm_content, artifact_path = spool_large_output(
+            output_text=out_str,
+            tool_name=tool_name,
+            call_id=call_id,
+            session_id=session_id,
+        )
 
         tool_messages.append(
             ToolMessage(
@@ -707,6 +859,8 @@ async def tool_runner_node(state: AgentState) -> Dict[str, Any]:
             "name": tool_name,
             "output": out_str[:2000],
             "duration": "0.05s",
+            "spooled": is_spooled,
+            "artifact_path": str(artifact_path) if artifact_path else None,
         })
 
     return {

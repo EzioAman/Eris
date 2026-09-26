@@ -1,0 +1,45 @@
+{
+  "_comment": "Model capability and architectural hints for metadata not directly exposed by provider APIs. Supports hot-reload.",
+  "hints": {
+    "groq": {
+      "match": "groq",
+      "features": ["Groq LPU Hardware Acceleration"],
+      "capabilities": ["Coding", "Speed"]
+    },
+    "gemini": {
+      "match": "gemini",
+      "features": ["Google Cloud AI Infrastructure"],
+      "capabilities": ["Coding", "Reasoning", "Vision", "Audio"]
+    },
+    "anthropic": {
+      "match": "claude",
+      "features": ["Constitutional AI Guardrails"],
+      "capabilities": ["Coding", "Reasoning", "Vision"]
+    },
+    "deepseek": {
+      "match": "deepseek",
+      "features": ["DeepSeek Sparse MoE"],
+      "capabilities": ["Coding", "Reasoning"]
+    },
+    "openai": {
+      "match": "openai",
+      "features": ["OpenAI Supercomputing Cluster"],
+      "capabilities": ["Coding", "Reasoning"]
+    },
+    "nvidia": {
+      "match": "nvidia",
+      "features": ["Nvidia TensorRT-LLM Acceleration"],
+      "capabilities": ["Reasoning", "Coding"]
+    },
+    "ollama": {
+      "match": "ollama",
+      "features": ["On-Device Local Inference"],
+      "capabilities": ["Local", "Private", "Zero-Cost"]
+    },
+    "openrouter": {
+      "match": "openrouter",
+      "features": ["Multi-Cloud Dynamic Routing"],
+      "capabilities": ["Coding", "Reasoning"]
+    }
+  }
+}

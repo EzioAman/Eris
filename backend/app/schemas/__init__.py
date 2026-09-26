@@ -48,6 +48,12 @@ try:
         DoneEvent,
     )
     from app.schemas.settings import PersonaSettings, UserSettings, get_default_personas
+    from app.schemas.models import (
+        ModelCatalogItem,
+        format_token_count,
+        format_context_display,
+        compute_context_tier,
+    )
 except ImportError:
     from backend.app.schemas.auth import (
         SignUpRequest,
@@ -93,6 +99,12 @@ except ImportError:
         DoneEvent,
     )
     from backend.app.schemas.settings import PersonaSettings, UserSettings, get_default_personas
+    from backend.app.schemas.models import (
+        ModelCatalogItem,
+        format_token_count,
+        format_context_display,
+        compute_context_tier,
+    )
 
 __all__ = [
     "SignUpRequest",
@@ -136,4 +148,8 @@ __all__ = [
     "PersonaSettings",
     "UserSettings",
     "get_default_personas",
+    "ModelCatalogItem",
+    "format_token_count",
+    "format_context_display",
+    "compute_context_tier",
 ]

@@ -1,6 +1,7 @@
+import json
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Literal, Optional, Type
+from pydantic import BaseModel, Field, field_validator
 
 
 class RiskLevel(str, Enum):
@@ -97,7 +98,7 @@ class GreetingInput(BaseModel):
 
 class ChangeModelInput(BaseModel):
     """Input arguments for updating the active LLM model."""
-    model_name: str = Field(description="Target model identifier (e.g. gemini/gemini-2.5-flash).")
+    model_name: str = Field(description="Target model identifier (e.g. gemini/gemini-3-flash-preview or openrouter/auto).")
 
 
 class SpawnSwarmInput(BaseModel):
@@ -123,6 +124,40 @@ class OpenBrowserInput(BaseModel):
     args: Optional[str] = Field(default=None, description="Raw argument string.")
 
 
+
+
+class RenderUIInput(BaseModel):
+    """Input arguments for dynamically declaring rich UI visuals to render."""
+    component: Literal[
+        "code-comparison",
+        "terminal",
+        "file-tree",
+        "media-player",
+        "safari-preview",
+        "subagent-chain",
+        "ios-preview",
+        "android-preview",
+    ] = Field(description="Which UI block to show the user.")
+    props: Dict[str, Any] = Field(default_factory=dict, description="Props for that component.")
+
+    @field_validator("props", mode="before")
+    @classmethod
+    def parse_props_if_string(cls, v: Any) -> Dict[str, Any]:
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return {"raw": v}
+        return v or {}
+
+
+class AskQuestionInput(BaseModel):
+    """Input arguments for mid-conversation user preference elicitation questions."""
+    prompt: str = Field(description="The structured question text to ask the user")
+    mode: Literal["single", "multi"] = Field(default="single", description="Selection mode: single or multi")
+    options: List[Dict[str, str]] = Field(default_factory=list, description="List of options, each containing id and label")
+    allowCustom: Optional[bool] = Field(default=False, description="Whether to include a 'Type something else…' custom input")
+    id: Optional[str] = Field(default=None, description="Optional stable question ID")
 
 
 class ToolDefinition(BaseModel):

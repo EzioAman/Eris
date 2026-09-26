@@ -1,9 +1,6 @@
 import React from 'react';
 import { cn } from '../../lib/utils';
 import erisDefaultGif from '../../assets/eris_default.gif';
-import erisThinkingSvg from '../../assets/eris_thinking.svg';
-import erisWorkingSvg from '../../assets/eris_working.svg';
-import erisIdleSvg from '../../assets/eris_idle.svg';
 import erisSleepSvg from '../../assets/eris_sleep.svg';
 import erisSuccessSvg from '../../assets/eris_success.svg';
 import erisErrorSvg from '../../assets/eris_error.svg';
@@ -43,14 +40,14 @@ export const ErisAvatar: React.FC<ErisAvatarProps> = ({
 }) => {
   const effectiveState: AgentState = isThinking ? 'thinking' : state;
 
-  // Dynamically map agent/thinking state to its authentic SVG illustration
+  // Dynamically map agent/thinking state to its authentic graphic or illustration
   const avatarSrc = (() => {
     switch (effectiveState) {
       case 'thinking':
-        return erisThinkingSvg;
       case 'working':
       case 'speaking':
-        return erisWorkingSvg;
+      case 'idle':
+        return erisDefaultGif;
       case 'alert':
       case 'error':
         return erisErrorSvg;
@@ -58,8 +55,6 @@ export const ErisAvatar: React.FC<ErisAvatarProps> = ({
         return erisSuccessSvg;
       case 'sleep':
         return erisSleepSvg;
-      case 'idle':
-        return erisIdleSvg;
       default:
         return erisDefaultGif;
     }

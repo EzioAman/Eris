@@ -383,9 +383,11 @@ async def list_available_models():
             prov = str(m.get("provider", "Other")).lower()
             catalogs[prov] = catalogs.get(prov, 0) + 1
 
+        recommended_model = models[0]["id"] if models else None
         return {
             "ok": True,
             "active_model": eris.active_model or None,
+            "recommended_model": recommended_model,
             "models": models,
             "catalogs": catalogs,
         }

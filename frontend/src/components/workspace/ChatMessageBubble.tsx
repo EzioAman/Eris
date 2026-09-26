@@ -11,8 +11,10 @@ import {
   ToolOutputCard,
 } from './ToolCards';
 import { TemplateRenderer } from './TemplateRenderer';
-import { MarkdownContent } from './MarkdownContent';
+import { UIBlockList } from './uiBlockRegistry';
 import { ClaudeThinkingBlock } from './ClaudeThinkingBlock';
+import { ChatMessageFormatter } from './ChatMessageFormatter';
+import { ElicitationQuestion } from './ElicitationQuestion';
 
 interface SourcesStripProps {
   sources: SourceItem[];
@@ -177,10 +179,12 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
 
   // ─── ASSISTANT MESSAGE (Untitled UI Messaging Format) ───
   const hasThinking = Boolean(
+    (msg.thoughtDuration !== undefined && msg.thoughtDuration > 0) ||
     msg.reasoning ||
     (msg.reasoningSteps && msg.reasoningSteps.length > 0) ||
     (msg.searches && msg.searches.length > 0) ||
-    (msg.switches && msg.switches.length > 0)
+    (msg.switches && msg.switches.length > 0) ||
+    (msg.tools && msg.tools.length > 0)
   );
 
   return (
@@ -254,12 +258,25 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             />
           )}
 
-          {/* Assistant Text Response */}
+          {/* Assistant Text Response formatted via ChatMessageFormatter */}
           {msg.text && (
-            <MarkdownContent
+            <ChatMessageFormatter
               content={msg.text}
               isDarkMode={isDarkMode}
-              className="text-[14px] leading-relaxed"
+            />
+          )}
+
+          {/* Elicitation Question (mid-conversation preference/choice) */}
+          {msg.elicitation && (
+            <ElicitationQuestion
+              question={msg.elicitation}
+              isDarkMode={isDarkMode}
+              initialAnswer={msg.elicitationAnswer}
+              onAnswer={(ans) => {
+                if (onSendMessage) {
+                  onSendMessage(ans.values.join(', '));
+                }
+              }}
             />
           )}
 
@@ -334,6 +351,13 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               onSendMessage={onSendMessage}
             />
           )}
+
+          {/* Render Agent-Declared UI Blocks */}
+          <UIBlockList
+            blocks={msg.uiBlocks}
+            isDarkMode={isDarkMode}
+            onSendMessage={onSendMessage}
+          />
         </div>
 
         {/* Untitled UI Message Action Footer (Copy, Regenerate, Thumbs Feedback) */}

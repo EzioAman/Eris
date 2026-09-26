@@ -286,9 +286,50 @@ class CoreToolbox:
             if re.search(pat, cmd, re.IGNORECASE):
                 return f"SECURITY_ERROR: Destructive command rejected by sandbox: {pat}"
 
-        # Windows compatibility: automatically alias 'grep' to 'git grep' on Windows
-        if os.name == "nt" and re.match(r"^grep\s+", cmd.strip()):
-            cmd = f"git {cmd.strip()}"
+        # Windows compatibility: automatically translate common POSIX commands on Windows cmd/powershell
+        if os.name == "nt":
+            trimmed = cmd.strip()
+            if re.match(r"^grep\s+", trimmed):
+                cmd = f"git {trimmed}"
+            elif trimmed == "ls" or re.match(r"^ls\s+", trimmed):
+                cmd = re.sub(r"^ls", "dir", trimmed, count=1)
+            elif trimmed == "pwd":
+                cmd = "cd"
+            elif re.match(r"^which\s+", trimmed):
+                cmd = re.sub(r"^which", "where", trimmed, count=1)
+            elif re.match(r"^cat\s+", trimmed):
+                cmd = re.sub(r"^cat", "type", trimmed, count=1)
+            elif re.match(r"^rm\s+-rf\s+", trimmed):
+                cmd = re.sub(r"^rm\s+-rf\s+", "rmdir /s /q ", trimmed, count=1)
+            elif re.match(r"^rm\s+", trimmed):
+                cmd = re.sub(r"^rm\s+", "del /q ", trimmed, count=1)
+
+        # Check if Docker is available and requested for isolated container execution
+        docker_enabled = os.environ.get("ERIS_DOCKER_SANDBOX", "0") == "1"
+        if docker_enabled:
+            # Check if docker executable exists
+            import shutil
+            docker_bin = shutil.which("docker")
+            if docker_bin:
+                workspace_str = str(settings.WORKSPACE_PATH).replace("\\", "/")
+                docker_cmd = (
+                    f'docker run --rm -v "{workspace_str}:/workspace" -w /workspace '
+                    f'--network none --memory 512m --cpus 1.0 python:3.11-slim sh -c "{cmd}"'
+                )
+                try:
+                    res = subprocess.run(
+                        docker_cmd,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                    out = (res.stdout or "") + (res.stderr or "")
+                    return f"DOCKER_SANDBOX_OUTPUT (code {res.returncode}):\n{out[:2500]}"
+                except subprocess.TimeoutExpired:
+                    return f"DOCKER_TIMEOUT: Container command timed out after 20s."
+                except Exception as d_err:
+                    pass  # Fall through to workspace shell
 
         try:
             res = subprocess.run(

@@ -287,6 +287,219 @@ async def get_valid_google_access_token(db: Any, user: Any, client_id: str) -> O
         return None
 
 
+def render_video_welcome_02_template(
+    recipient_email: str,
+    subject: str = "Welcome to ERIS",
+    message_body: str = "",
+    recipient_name: str = "",
+    video_title: str = "Tour of ERIS Autonomous Companion",
+    video_duration: str = "2:40 mins",
+    cta_url: str = "http://localhost:5173",
+) -> str:
+    """
+    Renders Untitled UI's official video-welcome-02 email template:
+    - Welcome header with ERIS brand mark
+    - Video walkthrough card with centered play button and duration pill
+    - Callout block with user custom message
+    - 3-step getting started checklist
+    - Primary CTA button and footer notices
+    """
+    greeting_name = recipient_name.strip() if recipient_name.strip() else recipient_email.split("@")[0]
+
+    custom_body_html = ""
+    if message_body.strip():
+        # Escape minimal HTML entities and format line breaks
+        cleaned_body = message_body.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        custom_body_html = f"""
+        <!-- Custom Message Block -->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 20px 0;">
+          <tr>
+            <td style="background-color: #090d16; border-left: 3px solid #3b82f6; border-radius: 8px; padding: 16px 20px;">
+              <div style="font-size: 13px; line-height: 1.6; color: #cbd5e1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                {cleaned_body}
+              </div>
+            </td>
+          </tr>
+        </table>
+        """
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{subject}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #0b0e14; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #f1f5f9;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0b0e14; padding: 40px 15px;">
+    <tr>
+      <td align="center">
+        <!-- Untitled UI Container (video-welcome-02) -->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; background-color: #121824; border: 1px solid #1e283d; border-radius: 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); overflow: hidden;">
+          
+          <!-- Top Accent Gradient Line -->
+          <tr>
+            <td height="3" style="background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #06b6d4 100%);"></td>
+          </tr>
+
+          <!-- Brand Logo Header -->
+          <tr>
+            <td style="padding: 32px 40px 20px 40px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td>
+                    <div style="font-size: 20px; font-weight: 800; letter-spacing: 2px; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                      ERIS
+                    </div>
+                  </td>
+                  <td align="right">
+                    <span style="font-size: 11px; font-family: ui-monospace, SFMono-Regular, monospace; color: #38bdf8; background-color: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 4px 8px; font-weight: 600;">
+                      v0.1.1 Companion
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Content Body -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 700; color: #ffffff; letter-spacing: -0.02em;">
+                {subject}
+              </h1>
+              <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #94a3b8;">
+                Hi {greeting_name}, welcome aboard! We are excited to have you on the platform. To help you get up to speed with your autonomous workspace and multi-agent swarms, here is a quick walkthrough video:
+              </p>
+
+              <!-- Untitled UI video-welcome-02 Card -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0b0f19; border: 1px solid #202d44; border-radius: 12px; overflow: hidden; margin: 10px 0 24px 0;">
+                <tr>
+                  <td align="center" style="padding: 36px 20px; background: radial-gradient(circle at center, #1e293b 0%, #0d121d 100%); position: relative;">
+                    <!-- Play Button Visual -->
+                    <a href="{cta_url}" target="_blank" style="text-decoration: none; display: inline-block;">
+                      <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                        <tr>
+                          <td align="center" justify="center" style="width: 58px; height: 58px; background: #ffffff; border-radius: 50%; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5); text-align: center; vertical-align: middle;">
+                            <span style="font-size: 22px; color: #4f46e5; margin-left: 4px; line-height: 58px; display: block;">&#9658;</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </a>
+                    <!-- Video Duration Pill -->
+                    <div style="margin-top: 14px;">
+                      <span style="background-color: rgba(0, 0, 0, 0.7); border: 1px solid rgba(255, 255, 255, 0.15); color: #e2e8f0; font-size: 11px; font-family: ui-monospace, monospace; padding: 3px 8px; border-radius: 6px; font-weight: 600;">
+                        {video_duration}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 16px 20px; background-color: #0d1320; border-top: 1px solid #1a2436;">
+                    <div style="font-size: 13px; font-weight: 600; color: #ffffff; margin-bottom: 2px;">
+                      {video_title}
+                    </div>
+                    <div style="font-size: 12px; color: #64748b;">
+                      Tour model selection, tool execution, and local file storage in under 3 minutes.
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              {custom_body_html}
+
+              <!-- 3-Step Getting Started Highlights -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 20px 0 28px 0;">
+                <tr>
+                  <td style="padding: 8px 0;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                      <tr>
+                        <td width="28" valign="top">
+                          <div style="width: 20px; height: 20px; border-radius: 50%; background-color: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; font-size: 11px; font-weight: 700; text-align: center; line-height: 20px;">
+                            1
+                          </div>
+                        </td>
+                        <td style="font-size: 13px; line-height: 1.5; color: #cbd5e1;">
+                          <strong style="color: #ffffff;">Choose Your Intelligence Model:</strong> Connect Gemini, OpenRouter, or Groq in the API Key Vault.
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                      <tr>
+                        <td width="28" valign="top">
+                          <div style="width: 20px; height: 20px; border-radius: 50%; background-color: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.4); color: #a78bfa; font-size: 11px; font-weight: 700; text-align: center; line-height: 20px;">
+                            2
+                          </div>
+                        </td>
+                        <td style="font-size: 13px; line-height: 1.5; color: #cbd5e1;">
+                          <strong style="color: #ffffff;">Spawn Specialist Subagents:</strong> Orchestrate parallel research and engineering tasks.
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                      <tr>
+                        <td width="28" valign="top">
+                          <div style="width: 20px; height: 20px; border-radius: 50%; background-color: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; font-size: 11px; font-weight: 700; text-align: center; line-height: 20px;">
+                            3
+                          </div>
+                        </td>
+                        <td style="font-size: 13px; line-height: 1.5; color: #cbd5e1;">
+                          <strong style="color: #ffffff;">Local-First Security:</strong> All memory and credentials stay isolated on your workstation.
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Primary CTA Button -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 10px 0 24px 0;">
+                <tr>
+                  <td align="center" style="border-radius: 10px; background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.35);">
+                    <a href="{cta_url}" target="_blank" style="font-size: 14px; font-weight: 600; color: #ffffff; text-decoration: none; padding: 13px 28px; display: inline-block;">
+                      Launch ERIS Workspace &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Sign-off -->
+              <p style="margin: 24px 0 0 0; font-size: 13px; line-height: 1.5; color: #94a3b8;">
+                Warm regards,<br>
+                <strong style="color: #cbd5e1;">The ERIS Team</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer Notices -->
+          <tr>
+            <td style="padding: 24px 40px; background-color: #0b0e16; border-top: 1px solid #1a2336;">
+              <p style="margin: 0 0 6px 0; font-size: 12px; line-height: 1.5; color: #475569;">
+                This message was sent to <strong style="color: #64748b;">{recipient_email}</strong> from your local ERIS AI Assistant.
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #334155;">
+                &copy; 2026 ERIS Inc. All rights reserved. &bull; Stored locally on device.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+
+
 async def dispatch_agent_email(
     db: Any,
     user: Any,
@@ -298,9 +511,11 @@ async def dispatch_agent_email(
     """
     Callable by the Eris agent to send an email to anyone on the user's behalf
     using their connected Google account via the Gmail REST API (zero SMTP needed).
+    Uses the Untitled UI video-welcome-02 email template as default.
     """
     import base64
     import httpx
+    from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
 
     token = await get_valid_google_access_token(db, user, google_client_id)
@@ -308,10 +523,20 @@ async def dispatch_agent_email(
         return False, "Google account is not connected with email sending permissions or token refresh failed."
 
     try:
-        message = MIMEText(body, "plain", "utf-8")
+        html_content = render_video_welcome_02_template(
+            recipient_email=to_email,
+            subject=subject,
+            message_body=body,
+            recipient_name="",
+        )
+
+        message = MIMEMultipart("alternative")
         message["to"] = to_email
         message["from"] = user.email
         message["subject"] = subject
+
+        message.attach(MIMEText(body, "plain", "utf-8"))
+        message.attach(MIMEText(html_content, "html", "utf-8"))
 
         raw_b64 = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
 
@@ -326,8 +551,8 @@ async def dispatch_agent_email(
             )
 
             if response.status_code == 200:
-                logger.info(f"✅ [GMAIL API] Agent successfully sent email from {user.email} to {to_email}")
-                return True, f"Email successfully sent to {to_email}."
+                logger.info(f"✅ [GMAIL API] Agent successfully sent email from {user.email} to {to_email} (video-welcome-02)")
+                return True, f"Email successfully sent to {to_email} using video-welcome-02 template."
             else:
                 err_msg = response.text
                 logger.error(f"❌ [GMAIL API ERROR] Failed to send email: {err_msg}")

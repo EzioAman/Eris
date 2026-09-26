@@ -8,6 +8,8 @@ export interface ToolOutputItem {
   name: string;
   output: string;
   duration: string;
+  spooled?: boolean;
+  artifact_path?: string | null;
 }
 
 export interface ToolApprovalItem {
@@ -44,6 +46,14 @@ export interface SourceItem {
   title?: string;
 }
 
+export interface UIBlock {
+  id: string;
+  component: string;
+  props: Record<string, any>;
+  status?: 'building' | 'ready';
+  afterTextOffset?: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -55,6 +65,20 @@ export interface ChatMessage {
   tools?: ChatTool[];
   templateType?: string;
   templateData?: any;
+  uiBlocks?: UIBlock[];
+  elicitation?: {
+    id: string;
+    prompt: string;
+    mode: 'single' | 'multi';
+    options: { id: string; label: string }[];
+    allowCustom?: boolean;
+  };
+  elicitationAnswer?: {
+    questionId: string;
+    mode: 'single' | 'multi';
+    values: string[];
+    isCustom: boolean;
+  };
   switches?: string[];
   thoughtDuration?: number;
   activeModel?: string;

@@ -48,6 +48,7 @@ export interface DataTableTemplateProps<T> {
   selectable?: boolean;
   selectedKeys?: (string | number)[];
   onSelectionChange?: (keys: (string | number)[]) => void;
+  onFilterChange?: (filters: Record<string, string[]>) => void;
   pageSize?: number;
   pageSizeOptions?: number[];
   isDarkMode?: boolean;
@@ -66,6 +67,7 @@ export function DataTableTemplate<T extends Record<string, any>>({
   selectable = true,
   selectedKeys = [],
   onSelectionChange,
+  onFilterChange,
   pageSize: initialPageSize = 10,
   pageSizeOptions = [10, 20, 50],
   isDarkMode = true,
@@ -98,10 +100,12 @@ export function DataTableTemplate<T extends Record<string, any>>({
   const handleToggleFilter = (filterId: string, value: string) => {
     setFilterSelections((prev) => {
       const current = prev[filterId] || [];
-      const next = current.includes(value)
+      const nextArr = current.includes(value)
         ? current.filter((v) => v !== value)
         : [...current, value];
-      return { ...prev, [filterId]: next };
+      const updated = { ...prev, [filterId]: nextArr };
+      onFilterChange?.(updated);
+      return updated;
     });
     setCurrentPage(1);
   };
@@ -109,6 +113,7 @@ export function DataTableTemplate<T extends Record<string, any>>({
   const handleResetFilters = () => {
     setSearchQuery('');
     setFilterSelections({});
+    onFilterChange?.({});
     setCurrentPage(1);
   };
 
@@ -537,7 +542,7 @@ export function DataTableTemplate<T extends Record<string, any>>({
                     )}
                   >
                     {selectable && (
-                      <td className="py-3 px-4 w-10">
+                      <td className="py-3.5 px-4 w-10">
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -548,7 +553,7 @@ export function DataTableTemplate<T extends Record<string, any>>({
                     )}
 
                     {visibleColumns.map((col) => (
-                      <td key={col.id} className={cn('py-3 px-4', col.className)}>
+                      <td key={col.id} className={cn('py-3.5 px-4 sm:px-5 align-middle', col.className)}>
                         {col.render
                           ? col.render(row, idx)
                           : col.accessorKey

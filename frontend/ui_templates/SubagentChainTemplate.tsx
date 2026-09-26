@@ -200,6 +200,26 @@ export const CustomWorkerSvg: React.FC<{ className?: string; isThinking?: boolea
     <circle cx="20" cy="42" r="2" className="fill-indigo-200" />
   </svg>
 );
+export const WriterCreatorSvg: React.FC<{ className?: string; isThinking?: boolean }> = ({
+  className = 'w-10 h-10',
+  isThinking = true,
+}) => (
+  <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" className={cn('shrink-0', className)}>
+    {/* Stylized Feather / Quill Path */}
+    <path
+      d="M48 10C48 10 38 14 30 24C22 34 18 46 16 52C22 50 34 46 42 38C50 30 52 18 48 10Z"
+      className="fill-fuchsia-500/15 stroke-fuchsia-400"
+      strokeWidth="2.5"
+      strokeLinejoin="round"
+    />
+    <path d="M48 10L16 52" className="stroke-fuchsia-300" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M16 52L12 56L18 53" className="stroke-fuchsia-400 fill-fuchsia-400" strokeWidth="1.5" />
+    {/* Animated Ink / Sparkle Droplets */}
+    <circle cx="24" cy="40" r="2" className={cn('fill-fuchsia-300', isThinking && 'animate-ping')} style={{ animationDuration: '2s' }} />
+    <circle cx="36" cy="26" r="2.5" className={cn('fill-pink-300', isThinking && 'animate-pulse')} />
+    <circle cx="50" cy="18" r="1.5" className={cn('fill-amber-300', isThinking && 'animate-bounce')} />
+  </svg>
+);
 
 // ─── 2. Subagents Metadata Catalog ─────────────────────────────────────────
 
@@ -240,6 +260,18 @@ export const SUBAGENT_CATALOG: SubagentMetadata[] = [
     description: 'Crawls official documentation, queries web search, and synthesizes clean markdown reports into doc/.',
     capabilities: ['Official doc scraping', 'Live web search', 'API spec validation', 'Markdown report synthesis'],
     svg: DocResearcherSvg,
+  },
+  {
+    role: 'WriterCreator',
+    title: 'Content Creator & Writer',
+    category: 'Synthesis & Communication',
+    color: 'text-fuchsia-500 dark:text-fuchsia-400',
+    borderColor: 'border-fuchsia-500/40',
+    bgLight: 'bg-fuchsia-50',
+    bgDark: 'bg-fuchsia-500/10',
+    description: 'Autonomous prose generation, technical summarization, human-clarity documentation, and creative composition.',
+    capabilities: ['Direct human prose', 'Zero corporate buzzwords', 'Technical documentation', 'Executive synthesis'],
+    svg: WriterCreatorSvg,
   },
   {
     role: 'CodeReviewer',
@@ -303,6 +335,38 @@ export const SUBAGENT_CATALOG: SubagentMetadata[] = [
   },
 ];
 
+export function resolveSubagentArchetype(role: string): SubagentMetadata {
+  const r = (role || '').toLowerCase().trim();
+  const clean = r.replace(/agent$/, '').replace(/^task_\d+_/, '');
+
+  if (clean.includes('sec') || clean.includes('audit') || clean.includes('pentest') || clean.includes('guard')) {
+    return SUBAGENT_CATALOG.find((s) => s.role === 'SecurityAuditor') || SUBAGENT_CATALOG[0];
+  }
+  if (clean.includes('research') || clean.includes('search') || clean.includes('doc') || clean.includes('scrape') || clean.includes('ground')) {
+    return SUBAGENT_CATALOG.find((s) => s.role === 'DocResearcher') || SUBAGENT_CATALOG[1];
+  }
+  if (clean.includes('write') || clean.includes('content') || clean.includes('creator') || clean.includes('poem') || clean.includes('author') || clean.includes('summary')) {
+    return SUBAGENT_CATALOG.find((s) => s.role === 'WriterCreator') || SUBAGENT_CATALOG[2];
+  }
+  if (clean.includes('code') || clean.includes('dev') || clean.includes('coder') || clean.includes('program') || clean.includes('architect')) {
+    return SUBAGENT_CATALOG.find((s) => s.role === 'CodeReviewer') || SUBAGENT_CATALOG[3];
+  }
+  if (clean.includes('refactor') || clean.includes('clean') || clean.includes('decouple') || clean.includes('extract')) {
+    return SUBAGENT_CATALOG.find((s) => s.role === 'RefactorAgent') || SUBAGENT_CATALOG[4];
+  }
+  if (clean.includes('perf') || clean.includes('opt') || clean.includes('speed') || clean.includes('latency') || clean.includes('throughput')) {
+    return SUBAGENT_CATALOG.find((s) => s.role === 'PerformanceOptimizer') || SUBAGENT_CATALOG[5];
+  }
+  if (clean.includes('test') || clean.includes('qa') || clean.includes('fuzz') || clean.includes('verify')) {
+    return SUBAGENT_CATALOG.find((s) => s.role === 'TesterAgent') || SUBAGENT_CATALOG[6];
+  }
+
+  const exact = SUBAGENT_CATALOG.find((s) => s.role.toLowerCase() === clean);
+  if (exact) return exact;
+
+  return SUBAGENT_CATALOG[SUBAGENT_CATALOG.length - 1]; // CustomWorker
+}
+
 // ─── 3. Linked Chain vs Parallel Chain Interactive Visualizer ─────────────
 
 export interface ChainStep {
@@ -341,7 +405,7 @@ export const SubagentChainTemplate: React.FC<SubagentChainTemplateProps> = ({
           { id: '4', role: 'TesterAgent', objective: 'Execute regression suite & lifecycle audits', status: 'idle' },
         ];
 
-  const selectedMeta = SUBAGENT_CATALOG.find((s) => s.role === selectedAgentRole) || SUBAGENT_CATALOG[0];
+  const selectedMeta = resolveSubagentArchetype(selectedAgentRole);
   const SelectedSvg = selectedMeta.svg;
 
   return (
@@ -361,7 +425,7 @@ export const SubagentChainTemplate: React.FC<SubagentChainTemplateProps> = ({
           </div>
           <div>
             <h3 className="text-sm font-bold tracking-tight">ERIS Subagent Swarm Ecosystem</h3>
-            <p className="text-[11px] opacity-60">7 Autonomous Archetypes with Real-Time Chain Reasoning</p>
+            <p className="text-[11px] opacity-60">{SUBAGENT_CATALOG.length} Autonomous Archetypes with Real-Time Chain Reasoning</p>
           </div>
         </div>
 
@@ -401,7 +465,7 @@ export const SubagentChainTemplate: React.FC<SubagentChainTemplateProps> = ({
         <div className="py-4 overflow-x-auto">
           <div className="flex items-center gap-2 min-w-[560px] pb-2">
             {activeSteps.map((step, idx) => {
-              const meta = SUBAGENT_CATALOG.find((s) => s.role === step.role) || SUBAGENT_CATALOG[6];
+              const meta = resolveSubagentArchetype(step.role);
               const SvgComp = meta.svg;
               const isThinking = step.status === 'thinking';
               const isCompleted = step.status === 'completed';

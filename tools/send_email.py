@@ -5,41 +5,94 @@ import os
 import sys
 
 def _get_active_user_and_token():
-    """Fetches the current user and their active Google OAuth access token from the local DB."""
-    import asyncio
-    from backend.app.database import AsyncSessionLocal
-    from backend.app.models import User
-    from backend.app.services.email_service import get_valid_google_access_token
-    from sqlalchemy import select
-
-    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
-
-    async def _fetch():
-        async with AsyncSessionLocal() as session:
-            # Look for an active user with Google OAuth configured
-            stmt = select(User).where(User.oauth_provider == "google").order_by(User.created_at.desc())
-            res = await session.execute(stmt)
-            user = res.scalars().first()
-
-            if not user:
-                # Fallback: get any primary owner user
-                stmt_any = select(User).order_by(User.created_at.asc())
-                res_any = await session.execute(stmt_any)
-                user = res_any.scalars().first()
-
-            if not user:
-                return None, None, "No active user found in the database. Please sign in with Google."
-
-            if not user.oauth_refresh_token and not user.oauth_access_token:
-                return None, None, f"User {user.email} is not logged in with Google OAuth. Please connect Google in settings."
-
-            token = await get_valid_google_access_token(session, user, client_id)
-            if not token:
-                return None, None, "Failed to obtain valid Google access token. Please re-authenticate."
-
-            return user.email, token, None
+    """
+    Resolves Gmail credentials via:
+    1. Local token.json / credentials.json OAuth flow (standard Google API pattern).
+    2. Local ERIS user DB if OAuth token was recorded.
+    """
+    # 1. Standard token.json check (matches Google OAuth InstalledAppFlow)
+    token_path = os.path.join(os.getcwd(), "token.json")
+    creds_path = os.path.join(os.getcwd(), "credentials.json")
 
     try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+
+        SCOPES = ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.modify"]
+        creds = None
+
+        if os.path.exists(token_path):
+            try:
+                creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+            except Exception:
+                creds = None
+
+        if creds and creds.valid:
+            return "me", creds.token, None
+
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(token_path, "w") as tf:
+                    tf.write(creds.to_json())
+                return "me", creds.token, None
+            except Exception:
+                pass
+
+        if os.path.exists(creds_path):
+            try:
+                from google_auth_oauthlib.flow import InstalledAppFlow
+                flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open(token_path, "w") as tf:
+                    tf.write(creds.to_json())
+                return "me", creds.token, None
+            except Exception as oauth_err:
+                return None, None, f"Google OAuth flow failed: {oauth_err}"
+    except ImportError:
+        pass
+
+    # 2. Database Session Fallback
+    import asyncio
+    try:
+        from backend.app.database import db_manager
+        from backend.app.models import User
+        from backend.app.services.email_service import get_valid_google_access_token
+        from sqlalchemy import select
+
+        client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+
+        async def _fetch():
+            if not db_manager.session_maker:
+                await db_manager.initialize()
+
+            async with db_manager.session_maker() as session:
+                stmt = select(User).where(User.oauth_provider == "google").order_by(User.created_at.desc())
+                res = await session.execute(stmt)
+                user = res.scalars().first()
+
+                if not user:
+                    stmt_any = select(User).order_by(User.created_at.asc())
+                    res_any = await session.execute(stmt_any)
+                    user = res_any.scalars().first()
+
+                if not user:
+                    return None, None, "No active user found in the database. Please provide credentials.json or sign in with Google."
+
+                if not user.oauth_refresh_token and not user.oauth_access_token:
+                    return None, None, (
+                        "No Gmail OAuth token found.\n"
+                        "To use Gmail, place your `credentials.json` (from Google Cloud Console) into the workspace, "
+                        "or sign in with Google in Settings."
+                    )
+
+                token = await get_valid_google_access_token(session, user, client_id)
+                if not token:
+                    return None, None, "Failed to obtain valid Google access token. Please re-authenticate."
+
+                return user.email, token, None
+
+        loop = None
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -52,20 +105,43 @@ def _get_active_user_and_token():
         else:
             return asyncio.run(_fetch())
     except Exception as e:
-        return None, None, f"Database error while resolving Google token: {str(e)}"
+        return None, None, (
+            f"Gmail Authentication Notice: No credentials.json or active Google token found ({e}).\n"
+            "To send emails: place your Google `credentials.json` file in the project root."
+        )
 
 
 def _send_via_gmail_api(sender_email: str, access_token: str, recipient: str, subject: str, body: str):
-    """Dispatches email via Google's official REST API endpoint."""
+    """Dispatches email via Google's official REST API endpoint with video-welcome-02 template."""
     import base64
     import urllib.request
     import json
     from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
 
-    message = MIMEText(body, "plain", "utf-8")
-    message["From"] = sender_email
-    message["To"] = recipient
-    message["Subject"] = subject
+    try:
+        from backend.app.services.email_service import render_video_welcome_02_template
+        html_body = render_video_welcome_02_template(
+            recipient_email=recipient,
+            subject=subject,
+            message_body=body,
+            recipient_name="",
+        )
+    except Exception:
+        html_body = None
+
+    if html_body:
+        message = MIMEMultipart("alternative")
+        message["From"] = sender_email
+        message["To"] = recipient
+        message["Subject"] = subject
+        message.attach(MIMEText(body, "plain", "utf-8"))
+        message.attach(MIMEText(html_body, "html", "utf-8"))
+    else:
+        message = MIMEText(body, "plain", "utf-8")
+        message["From"] = sender_email
+        message["To"] = recipient
+        message["Subject"] = subject
 
     raw_b64 = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
 

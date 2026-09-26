@@ -7,6 +7,7 @@ import type {
   ChatTool,
   ToolApprovalItem,
   ActiveThinkingState,
+  UIBlock,
 } from './chatTypes';
 import { PanelRight } from 'lucide-react';
 import { WorkspaceHeader } from './WorkspaceHeader';
@@ -21,6 +22,7 @@ import { FilePreviewModal } from './FilePreviewModal';
 import { PluginConfigModal, type PluginItem } from './PluginConfigModal';
 import { CommandPaletteModal } from './CommandPaletteModal';
 import { ApiKeyVaultModal } from '../settings/ApiKeyVaultModal';
+import { ProfileSettingsModal } from '../settings/ProfileSettingsModal';
 import { LegalTermsModal } from '../legal/LegalTermsModal';
 import { TemplateGallery } from '../dev/TemplateGallery';
 import { useKeyboardShortcuts } from '../../context/KeyboardShortcutManager';
@@ -200,6 +202,37 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const [activeThinking, setActiveThinking] = useState<ActiveThinkingState | null>(null);
   const [executingApprovalId, setExecutingApprovalId] = useState<string | null>(null);
   const [showTemplateGallery, setShowTemplateGallery] = useState(false);
+
+  // Chat Zoom State with LocalStorage Persistence
+  const [chatZoom, setChatZoom] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('eris_chat_zoom');
+      return saved ? parseInt(saved, 10) : 100;
+    } catch {
+      return 100;
+    }
+  });
+
+  const handleZoomIn = useCallback(() => {
+    setChatZoom((prev) => {
+      const next = Math.min(prev + 10, 150);
+      try { localStorage.setItem('eris_chat_zoom', String(next)); } catch { }
+      return next;
+    });
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setChatZoom((prev) => {
+      const next = Math.max(prev - 10, 80);
+      try { localStorage.setItem('eris_chat_zoom', String(next)); } catch { }
+      return next;
+    });
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setChatZoom(100);
+    try { localStorage.setItem('eris_chat_zoom', '100'); } catch { }
+  }, []);
 
   // User-Resizable Panel Dimensions with LocalStorage Persistence
   const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
@@ -450,6 +483,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
 
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
   const [isModelConfigOpen, setIsModelConfigOpen] = useState(false);
+  const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<{ path: string; name: string } | null>(null);
 
   // Active Model & Execution Mode State synced across workspace
@@ -484,14 +518,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     const handleOpenModelConfig = () => {
       setIsModelConfigOpen(true);
     };
+    const handleOpenSettings = () => {
+      setIsProfileSettingsOpen(true);
+    };
 
     window.addEventListener('eris:model-changed', handleModelChanged);
     window.addEventListener('eris:mode-changed', handleModeChanged);
     window.addEventListener('eris:open-model-config', handleOpenModelConfig);
+    window.addEventListener('eris:open-settings', handleOpenSettings);
+    window.addEventListener('eris:open-profile', handleOpenSettings);
     return () => {
       window.removeEventListener('eris:model-changed', handleModelChanged);
       window.removeEventListener('eris:mode-changed', handleModeChanged);
       window.removeEventListener('eris:open-model-config', handleOpenModelConfig);
+      window.removeEventListener('eris:open-settings', handleOpenSettings);
+      window.removeEventListener('eris:open-profile', handleOpenSettings);
     };
   }, []);
 
@@ -500,6 +541,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   }, [executionMode]);
 
   const streamIntervalRef = useRef<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const activeReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const streamingTextRef = useRef<string>('');
+
   const conversationsRef = useRef(conversations);
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -510,16 +555,35 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   useEffect(() => {
     return () => {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+      if (activeReaderRef.current) {
+        try { activeReaderRef.current.cancel(); } catch { }
+      }
+      if (abortControllerRef.current) {
+        try { abortControllerRef.current.abort(); } catch { }
+      }
     };
   }, []);
 
   // Switch Conversation
   const handleSelectChat = useCallback((id: string) => {
+    if (activeReaderRef.current) {
+      try { activeReaderRef.current.cancel(); } catch { }
+      activeReaderRef.current = null;
+    }
+    if (abortControllerRef.current) {
+      try { abortControllerRef.current.abort(); } catch { }
+      abortControllerRef.current = null;
+    }
+    if (streamIntervalRef.current) {
+      clearInterval(streamIntervalRef.current);
+      streamIntervalRef.current = null;
+    }
+
     setActiveChatId(id);
     setMessages(conversationsRef.current[id] || []);
     setIsStreaming(false);
     setStreamingText('');
-    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    streamingTextRef.current = '';
   }, []);
 
   // Scroll chat to latest message
@@ -599,6 +663,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       });
     }
   }, [activeChatId]);
+
+  // Rename Chat Title
+  const handleRenameChat = useCallback((chatId: string, newTitle: string) => {
+    const clean = newTitle.trim();
+    if (!clean) return;
+    setChatSessions((prev) =>
+      prev.map((s) => (s.id === chatId ? { ...s, title: clean } : s))
+    );
+  }, []);
 
   // Toggle Handlers
   const handleToggleConnectors = useCallback(() => {
@@ -783,6 +856,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         turn: 1,
       });
 
+      streamingTextRef.current = '';
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       try {
         const token = sessionStatus?.token || (typeof localStorage !== 'undefined' ? localStorage.getItem('eris_session_token') : null);
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -793,6 +870,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         const response = await fetch('/api/chat/message/stream', {
           method: 'POST',
           headers,
+          signal: controller.signal,
           body: JSON.stringify({
             message: text,
             sessionId: `${userScopeKey}_${activeChatId}`,
@@ -808,12 +886,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         }
 
         const reader = response.body.getReader();
+        activeReaderRef.current = reader;
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
         let donePayload: any = null;
         const accumulatedThoughts: string[] = [];
         const accumulatedSwitches: string[] = [];
         const accumulatedSearches: any[] = [];
+        const accumulatedActions: string[] = [];
+        const accumulatedUIBlocks: UIBlock[] = [];
+        let elicitationPayload: any = null;
         let hasStreamedChunks = false;
 
         while (true) {
@@ -832,6 +914,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
 
             try {
               const ev = JSON.parse(jsonStr);
+              console.log('[SSE]', ev.type, ev); // TEMP
 
               if (ev.type === 'switch' || ev.type === 'model_switch') {
                 if (ev.model) {
@@ -862,6 +945,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                     : null
                 );
               } else if (ev.type === 'action') {
+                if (ev.text) accumulatedActions.push(ev.text);
                 setActiveThinking((prev) =>
                   prev
                     ? {
@@ -872,12 +956,14 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                     : null
                 );
               } else if (ev.type === 'subagent_spawn') {
+                const spawnDesc = `SPAWN_AGENT ${ev.role}|${ev.objective}`;
+                accumulatedActions.push(spawnDesc);
                 setActiveThinking((prev) =>
                   prev
                     ? {
                       ...prev,
                       currentAction: `❖ Swarm Delegation: Spawning [${ev.role}] -> ${ev.objective}`,
-                      actions: [...prev.actions, `SPAWN_AGENT ${ev.role}|${ev.objective}`],
+                      actions: [...prev.actions, spawnDesc],
                     }
                     : null
                 );
@@ -918,8 +1004,18 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               } else if (ev.type === 'chunk' || ev.type === 'token') {
                 if (ev.text) {
                   hasStreamedChunks = true;
-                  setStreamingText((prev) => prev + ev.text);
+                  streamingTextRef.current += ev.text;
+                  setStreamingText(streamingTextRef.current);
                 }
+              } else if (ev.type === 'ui_intent') {
+                accumulatedUIBlocks.push({
+                  id: crypto.randomUUID(),
+                  component: ev.component,
+                  props: ev.props || {},
+                  status: 'ready',
+                });
+              } else if (ev.type === 'elicitation' || ev.type === 'question') {
+                elicitationPayload = ev.question || ev;
               } else if (ev.type === 'done') {
                 donePayload = ev;
                 if (ev.usage) {
@@ -980,13 +1076,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         const termTool = assistantTools.find((t) => getToolName(t).includes('run_command')) ||
           rawToolCalls.find((t: any) => (t.name || '').includes('run_command')) ||
           assistantTools.find((t) => t.kind === 'approval' && t.command);
-        const editTool = assistantTools.find((t) => 
-          getToolName(t).includes('write_to_file') || 
+        const editTool = assistantTools.find((t) =>
+          getToolName(t).includes('write_to_file') ||
           getToolName(t).includes('replace_file_content') ||
           getToolName(t).includes('create_custom_tool') ||
           getToolName(t).includes('write_file')
-        ) || rawToolCalls.find((t: any) => 
-          (t.name || '').includes('write_to_file') || 
+        ) || rawToolCalls.find((t: any) =>
+          (t.name || '').includes('write_to_file') ||
           (t.name || '').includes('replace_file_content') ||
           (t.name || '').includes('create_custom_tool') ||
           (t.name || '').includes('write_file')
@@ -1075,19 +1171,27 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         const isAndroidPreview =
           !isPendingApproval &&
           (text.trim() === '/template android' ||
-          /\b(android|android preview|android device|pixel phone|apk preview)\b/i.test(lowerText));
+            /\b(android|android preview|android device|pixel phone|apk preview)\b/i.test(lowerText));
 
         const isIosPreview =
           !isPendingApproval &&
           (text.trim() === '/template ios' ||
-          /\b(ios|iphone|ios preview|apple device|dynamic island|swiftui preview)\b/i.test(lowerText));
+            /\b(ios|iphone|ios preview|apple device|dynamic island|swiftui preview)\b/i.test(lowerText));
 
         const isSubagentsRequest =
           !isPendingApproval &&
           (text.trim() === '/template subagent' ||
-          text.trim() === '/template subagent-chain' ||
-          /\b(subagent|subagents|swarm|list subagents|show subagents|all subagents|spawn subagent|chain reasoning)\b/i.test(lowerText) ||
-          rawToolCalls.some((t: any) => (t.name || t.action || '').includes('SPAWN_AGENT')));
+            text.trim() === '/template subagent-chain' ||
+            /\b(subagent|subagents|swarm|list subagents|show subagents|all subagents|spawn subagent|chain reasoning)\b/i.test(lowerText) ||
+            rawToolCalls.some((t: any) => (t.name || t.action || '').includes('SPAWN_AGENT')));
+
+        const isReasoningTraceRequest =
+          !isPendingApproval &&
+          (text.trim().startsWith('/reasoning') ||
+            text.trim() === '/template reasoning' ||
+            text.trim() === '/template reasoning-trace' ||
+            text.trim() === '/template trace' ||
+            /\b(reasoning trace|trace template|typewriter reasoning)\b/i.test(lowerText));
 
         let templateType: string | undefined = undefined;
         let templateData: any = undefined;
@@ -1270,19 +1374,33 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             title: isWebSearch ? `Web Browser: ${text}` : cleanUrl,
             readerContent: finalReply,
           };
+        } else if (isReasoningTraceRequest) {
+          templateType = 'reasoning-trace';
+          templateData = {
+            reasoning: [
+              "The failing test points at session validation, not the route handler, so I should look at verifySession before touching anything else.",
+              "It compares the raw incoming token against the stored value directly — that works, but it means a timing side-channel and no expiry check.",
+              "I'll hash the token before comparison and reject anything past its expiry, then rerun auth.spec.ts to confirm nothing else depended on the old behavior.",
+            ],
+            finalAnswer:
+              "Fixed it — verifySession now hashes the token before comparing it against stored sessions, and rejects anything past its expiry. Tests are passing.",
+          };
         }
 
         if (hasStreamedChunks) {
           setIsStreaming(false);
           setStreamingText('');
+          streamingTextRef.current = '';
           const finalReasoning =
             donePayload?.reasoning ||
             (accumulatedThoughts.length > 0 ? accumulatedThoughts.join('\n\n') : undefined);
           const finalReasoningSteps =
             donePayload?.reasoningSteps ||
             (accumulatedThoughts.length > 0
-              ? accumulatedThoughts.map((t, idx) => ({ turn: idx + 1, thought: t }))
-              : undefined);
+              ? accumulatedThoughts.map((t, idx) => ({ turn: idx + 1, thought: t, actions: accumulatedActions }))
+              : accumulatedActions.length > 0
+                ? [{ turn: 1, thought: 'Executed assigned tool actions.', actions: accumulatedActions }]
+                : undefined);
 
           const assistantMsg: ChatMessage = {
             id: crypto.randomUUID(),
@@ -1299,6 +1417,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             tools: assistantTools.length > 0 ? assistantTools : undefined,
             templateType,
             templateData,
+            uiBlocks: accumulatedUIBlocks.length > 0 ? accumulatedUIBlocks : undefined,
+            elicitation: elicitationPayload || undefined,
           };
           setMessages((prev) => {
             const next = [...prev, assistantMsg];
@@ -1317,6 +1437,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         streamIntervalRef.current = window.setInterval(() => {
           tokenIdx = Math.min(tokens.length, tokenIdx + step);
           const progressiveText = tokens.slice(0, tokenIdx).join('');
+          streamingTextRef.current = progressiveText;
           setStreamingText(progressiveText);
 
           if (tokenIdx >= tokens.length) {
@@ -1326,14 +1447,17 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             }
             setIsStreaming(false);
             setStreamingText('');
+            streamingTextRef.current = '';
             const finalReasoning =
               donePayload?.reasoning ||
               (accumulatedThoughts.length > 0 ? accumulatedThoughts.join('\n\n') : undefined);
             const finalReasoningSteps =
               donePayload?.reasoningSteps ||
               (accumulatedThoughts.length > 0
-                ? accumulatedThoughts.map((t, idx) => ({ turn: idx + 1, thought: t }))
-                : undefined);
+                ? accumulatedThoughts.map((t, idx) => ({ turn: idx + 1, thought: t, actions: accumulatedActions }))
+                : accumulatedActions.length > 0
+                  ? [{ turn: 1, thought: 'Executed assigned tool actions.', actions: accumulatedActions }]
+                  : undefined);
 
             const assistantMsg: ChatMessage = {
               id: crypto.randomUUID(),
@@ -1350,6 +1474,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               tools: assistantTools.length > 0 ? assistantTools : undefined,
               templateType,
               templateData,
+              uiBlocks: accumulatedUIBlocks.length > 0 ? accumulatedUIBlocks : undefined,
+              elicitation: elicitationPayload || undefined,
             };
             setMessages((prev) => {
               const next = [...prev, assistantMsg];
@@ -1358,7 +1484,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             });
           }
         }, 20);
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.name === 'AbortError') {
+          // Handled gracefully via handleStopStreaming
+          return;
+        }
         console.error('Streaming message error:', err);
         setIsStreaming(false);
         setActiveThinking(null);
@@ -1373,27 +1503,59 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           setConversations((c) => ({ ...c, [activeChatId]: next }));
           return next;
         });
+      } finally {
+        activeReaderRef.current = null;
+        abortControllerRef.current = null;
       }
     },
-    [activeChatId]
+    [activeChatId, activeModel, executionMode, sessionStatus?.token, userScopeKey]
   );
 
   const handleStopStreaming = useCallback(() => {
+    // 1. Cancel active reader stream immediately
+    if (activeReaderRef.current) {
+      try {
+        activeReaderRef.current.cancel();
+      } catch { }
+      activeReaderRef.current = null;
+    }
+
+    // 2. Abort active fetch request
+    if (abortControllerRef.current) {
+      try {
+        abortControllerRef.current.abort();
+      } catch { }
+      abortControllerRef.current = null;
+    }
+
+    // 3. Clear typewriter interval if active
     if (streamIntervalRef.current) {
       clearInterval(streamIntervalRef.current);
-      setIsStreaming(false);
+      streamIntervalRef.current = null;
+    }
+
+    setIsStreaming(false);
+    setActiveThinking(null);
+
+    // 4. Save whatever response was streamed so far
+    const partial = streamingTextRef.current.trim();
+    if (partial) {
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        text: partial + '\n\n*(Generation stopped by user)*',
+        timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      };
       setMessages((prev) => {
-        const assistantMsg: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          text: streamingText,
-        };
         const next = [...prev, assistantMsg];
         setConversations((c) => ({ ...c, [activeChatId]: next }));
         return next;
       });
     }
-  }, [activeChatId, streamingText]);
+
+    setStreamingText('');
+    streamingTextRef.current = '';
+  }, [activeChatId]);
 
   // Handle Approvals
   const handleDecision = useCallback(
@@ -1432,45 +1594,54 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         .then((data) => {
           setExecutingApprovalId(null);
           setMessages((prev) => {
+            const followUpTools: ChatTool[] = (data.toolCalls || []).map((t: any, idx: number) => ({
+              kind: 'output' as const,
+              id: t.id || `tool-${Date.now()}-${idx}`,
+              name: t.name || t.tool || 'Tool Execution',
+              output: t.output || '',
+              duration: t.duration || '0.05s',
+            }));
+
             const updated = prev.map((m) => {
               if (!m.tools) return m;
+              const hasTargetTool = m.tools.some((t) => t.kind === 'approval' && t.id === toolId);
+              if (!hasTargetTool) return m;
+
+              // Update the target tool's decision
+              const updatedTools = m.tools.map((t) =>
+                t.kind === 'approval' && t.id === toolId
+                  ? { ...t, decision: approved ? ('approved' as const) : ('denied' as const) }
+                  : t
+              );
+
+              // Append any new output tools executed in this turn
+              for (const ft of followUpTools) {
+                if (!updatedTools.some((t) => t.id === ft.id)) {
+                  updatedTools.push(ft);
+                }
+              }
+
+              // Update reasoning and text in-place in the SAME bubble
+              const newReasoning = data.reasoning
+                ? (m.reasoning ? `${m.reasoning}\n\n${data.reasoning}` : data.reasoning)
+                : m.reasoning;
+
+              let newText = m.text;
+              if (data.reply && data.reply !== 'Decision processed successfully.') {
+                newText = m.text ? `${m.text}\n\n${data.reply}` : data.reply;
+              } else if (!m.text) {
+                newText = approved
+                  ? 'Tool execution completed. ERIS verified output and reached current goal.'
+                  : 'Action cancelled by user.';
+              }
+
               return {
                 ...m,
-                tools: m.tools.map((t) =>
-                  t.kind === 'approval' && t.id === toolId
-                    ? { ...t, decision: approved ? ('approved' as const) : ('denied' as const) }
-                    : t
-                ),
+                text: newText,
+                reasoning: newReasoning,
+                tools: updatedTools,
               };
             });
-
-            if (data.reply || (data.toolCalls && data.toolCalls.length > 0)) {
-              const followUpTools: ChatTool[] = (data.toolCalls || []).map((t: any, idx: number) => ({
-                kind: 'output' as const,
-                id: t.id || `tool-${Date.now()}-${idx}`,
-                name: t.name || t.tool || 'Tool Execution',
-                output: t.output || '',
-                duration: t.duration || '0.05s',
-              }));
-
-              const replyText =
-                data.reply ||
-                (approved
-                  ? `Tool execution completed successfully. Results are verified and integrated to help achieve the goal.`
-                  : `Tool execution cancelled. ERIS will explore safe alternative tools to achieve the objective.`);
-
-              const followUpMsg: ChatMessage = {
-                id: crypto.randomUUID(),
-                role: 'assistant',
-                text: replyText,
-                reasoning: data.reasoning,
-                reasoningSteps: data.reasoningSteps,
-                tools: followUpTools.length > 0 ? followUpTools : undefined,
-              };
-              const next = [...updated, followUpMsg];
-              setConversations((c) => ({ ...c, [activeChatId]: next }));
-              return next;
-            }
 
             setConversations((c) => ({ ...c, [activeChatId]: updated }));
             return updated;
@@ -1517,7 +1688,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           if (onSignOut) onSignOut();
           else navigate('intro');
         }}
-        onEditProfile={() => navigate('profile_setup')}
+        onEditProfile={() => setIsProfileSettingsOpen(true)}
         onReturnToIntro={onReturnToIntro || (() => navigate('intro'))}
         onReturnToGreeting={onReturnToGreeting || (() => navigate('greeting'))}
         onClearChat={handleClearChat}
@@ -1553,13 +1724,26 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           onToggleTools={handleToggleTools}
           onOpenModelMatrix={() => setIsModelConfigOpen(true)}
           onOpenWorkflowPage={() => navigate('workflow')}
+          onOpenSettings={() => setIsProfileSettingsOpen(true)}
           chatHistory={chatSessions}
           activeChatId={activeChatId}
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
           onScrollToLatest={handleScrollToLatest}
           onDeleteChat={handleDeleteChat}
+          onRenameChat={handleRenameChat}
           width={leftSidebarWidth}
+          userProfile={userProfile}
+          onAddAccount={() => navigate('intro', { meta: { mode: 'signup' } })}
+          onSignOut={() => {
+            try {
+              localStorage.removeItem('eris_show_workspace_tree');
+              localStorage.removeItem('eris_show_right_sidebar');
+              localStorage.removeItem('eris_is_sidebar_expanded');
+            } catch { }
+            if (onSignOut) onSignOut();
+            else navigate('intro');
+          }}
         />
 
         {isSidebarExpanded && (
@@ -1612,6 +1796,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             onOpenModelConfig={() => setIsModelConfigOpen(true)}
             scrollRef={chatScrollRef}
             activeModel={activeModel}
+            chatZoom={chatZoom}
+            onZoomChange={setChatZoom}
           />
           <ChatInputBar
             isDarkMode={isDarkMode}
@@ -1620,6 +1806,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             onStopStreaming={handleStopStreaming}
             onOpenBrowser={handleOpenBrowser}
             conversationMessages={messages}
+            chatZoom={chatZoom}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onZoomReset={handleZoomReset}
           />
         </div>
 
@@ -1688,6 +1878,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         isOpen={isApiKeyVaultOpen}
         onClose={() => setIsApiKeyVaultOpen(false)}
         isDarkMode={isDarkMode}
+      />
+
+      <ProfileSettingsModal
+        isOpen={isProfileSettingsOpen}
+        onClose={() => setIsProfileSettingsOpen(false)}
+        isDarkMode={isDarkMode}
+        activeModel={activeModel || 'gemini/gemini-3-flash-preview'}
+        onOpenModelConfig={() => {
+          setIsProfileSettingsOpen(false);
+          setIsModelConfigOpen(true);
+        }}
+        onOpenApiKeyVault={() => {
+          setIsProfileSettingsOpen(false);
+          setIsApiKeyVaultOpen(true);
+        }}
       />
 
       <PluginConfigModal

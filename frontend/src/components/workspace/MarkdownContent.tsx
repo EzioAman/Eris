@@ -75,7 +75,15 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
   const renderedElements = useMemo(() => {
     if (!content) return null;
 
-    const lines = content.split('\n');
+    const cleanedText = content
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+      .replace(/<\|DSML\|>[\s\S]*?<\/\|DSML\|>/gi, '')
+      .replace(/<(?:think|thought|thinking|reasoning)>[\s\S]*?<\/(?:think|thought|thinking|reasoning)>/gi, '')
+      .trim();
+
+    if (!cleanedText) return null;
+
+    const lines = cleanedText.split('\n');
     const elements: React.ReactNode[] = [];
     let inCodeBlock = false;
     let codeLanguage = '';

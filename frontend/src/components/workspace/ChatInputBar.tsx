@@ -11,9 +11,10 @@ import {
   Eraser,
   HelpCircle,
   UserCheck,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { formatModelName } from '../../lib/modelUtils';
 import { FileUploadTemplate } from '../../../ui_templates/FileUploadTemplate';
 
 interface TokenUsageData {
@@ -75,6 +76,10 @@ export interface ChatInputBarProps {
   onStopStreaming: () => void;
   onOpenBrowser?: (url?: string) => void;
   conversationMessages?: { text?: string }[];
+  chatZoom?: number;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onZoomReset?: () => void;
 }
 
 interface SlashCommand {
@@ -102,6 +107,10 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
   onStopStreaming,
   onOpenBrowser,
   conversationMessages,
+  chatZoom,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
 }) => {
   const [inputValue, setInputValue] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
@@ -551,25 +560,47 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
                 <Globe className="h-3.5 w-3.5 shrink-0" />
                 <span>Web Browser</span>
               </button>
-
-              {/* Active Model Quick Selector Button */}
-              <button
-                type="button"
-                onClick={() => window.dispatchEvent(new CustomEvent('eris:open-model-config'))}
-                title={`Active LLM: ${activeModelInfo.name} (Click to switch model)`}
-                className={cn(
-                  'cursor-pointer inline-flex h-7 items-center gap-1.5 px-2.5 rounded-lg border transition-all text-xs font-medium',
-                  isDarkMode
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:border-emerald-500/50'
-                    : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300'
-                )}
-              >
-                <Cpu className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                <span className="font-semibold max-w-[130px] truncate">{formatModelName(activeModelInfo.name)}</span>
-              </button>
             </div>
 
             <div className="flex items-center gap-2">
+              {chatZoom !== undefined && (
+                <div
+                  className={cn(
+                    'group flex items-center gap-0.5 px-2 py-1 rounded-xl border text-xs font-mono transition-colors mr-1',
+                    isDarkMode
+                      ? 'border-white/10 bg-white/5 text-neutral-400 hover:text-white hover:border-cyan-500/40'
+                      : 'border-slate-200 bg-slate-50 text-slate-500 hover:text-slate-900 hover:border-blue-400'
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={onZoomOut}
+                    disabled={chatZoom <= 80}
+                    title="Zoom out (Ctrl + Scroll Down)"
+                    className="p-0.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30 cursor-pointer"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onZoomReset}
+                    title="Reset zoom (100%)"
+                    className="px-1 font-medium transition-colors cursor-pointer"
+                  >
+                    {chatZoom}%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onZoomIn}
+                    disabled={chatZoom >= 150}
+                    title="Zoom in (Ctrl + Scroll Up)"
+                    className="p-0.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30 cursor-pointer"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               <div className="mr-2">
                 <TokenUsageIndicator
                   isDarkMode={isDarkMode}

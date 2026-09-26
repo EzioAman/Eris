@@ -25,6 +25,7 @@ import { CodeComparisonTemplate } from '../../../ui_templates/CodeComparisonTemp
 import { MediaPlaylistTemplate } from '../../../ui_templates/MediaPlaylistTemplate';
 import { ChatThinkingUI } from '../../../ui_templates/ChatThinkingUI';
 import { SubagentChainTemplate } from '../../../ui_templates/SubagentChainTemplate';
+import { ReasoningTraceTemplate } from '../../../ui_templates/ReasoningTraceTemplate';
 
 export interface TemplateRendererProps {
   type: string;
@@ -88,6 +89,14 @@ function getTemplateMeta(type: string, data: any): TemplateMeta {
         title: 'iOS Dynamic Preview',
         icon: <Smartphone className="w-3.5 h-3.5 text-sky-400" />,
         badge: 'EMULATOR',
+      };
+    case 'reasoning-trace':
+    case 'reasoning':
+    case 'trace':
+      return {
+        title: 'Reasoning Trace',
+        icon: <Sparkles className="w-3.5 h-3.5 text-amber-400" />,
+        badge: 'STREAMING',
       };
     default:
       return {
@@ -217,6 +226,18 @@ export const TemplateRenderer: React.FC<TemplateRendererProps> = ({
               defaultView={data?.defaultView || 'parallel'}
               isDarkMode={isDarkMode}
               onSelectAgent={(role) => onSendMessage?.(`/spawn ${role}`)}
+            />
+          </div>
+        );
+      case 'reasoning-trace':
+      case 'reasoning':
+      case 'trace':
+        return (
+          <div className="flex justify-center w-full max-w-xl mx-auto py-2">
+            <ReasoningTraceTemplate
+              reasoning={data?.reasoning || data?.reasoningParagraphs || data?.paragraphs}
+              finalAnswer={data?.finalAnswer || data?.answer}
+              isDarkMode={isDarkMode}
             />
           </div>
         );

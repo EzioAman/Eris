@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -22,6 +23,11 @@ from backend.app.config import settings
 from backend.app.database import db_manager
 from backend.app.api import auth, system, workspace, websocket, workflows, connectors, chat, contact, plugins, tools, settings_api, keys_api
 
+try:
+    from app.agent.registry import registry as tool_registry
+except ImportError:
+    from backend.app.agent.registry import registry as tool_registry
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -34,6 +40,13 @@ async def lifespan(app: FastAPI):
     os.environ["ERIS_RUNTIME"] = "server"
     logger.info("Starting ERIS Backend (Server Mode)...")
     await db_manager.initialize()
+
+    # Warm the tool registry (loads tools + precomputes/loads-cached embeddings)
+    # here at startup, off the event loop, so the first user request never pays
+    # this cost and no request blocks the loop while it runs.
+    logger.info("Warming tool registry (loading tools, precomputing/loading cached embeddings)...")
+    await asyncio.to_thread(tool_registry.initialize)
+
     logger.info("Runtime initialized successfully.")
     yield
     logger.info("Initiating graceful shutdown...")

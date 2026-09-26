@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from langchain_core.messages import AIMessage, HumanMessage
@@ -11,17 +12,39 @@ from langgraph.types import Command
 import requests
 
 try:
-    from app.agent.graph import agent_graph
+    from app.agent.subagent_personas import swarm_manager, SubagentTaskSpec
     from app.config import settings
+    from app.schemas.models import (
+        ModelCatalogItem,
+        format_token_count,
+        format_context_display,
+        compute_context_tier,
+    )
     from app.services.learning import load_habits
+    from app.services.model_catalog import model_catalog_service
     from app.services.rag_service import rag_vault
     from app.services.vault_service import get_all_active_credentials_sync
 except ImportError:
-    from backend.app.agent.graph import agent_graph
+    from backend.app.agent.subagent_personas import swarm_manager, SubagentTaskSpec
     from backend.app.config import settings
+    from backend.app.schemas.models import (
+        ModelCatalogItem,
+        format_token_count,
+        format_context_display,
+        compute_context_tier,
+    )
     from backend.app.services.learning import load_habits
+    from backend.app.services.model_catalog import model_catalog_service
     from backend.app.services.rag_service import rag_vault
     from backend.app.services.vault_service import get_all_active_credentials_sync
+
+
+def _get_agent_graph():
+    try:
+        from app.agent.graph import agent_graph
+    except ImportError:
+        from backend.app.agent.graph import agent_graph
+    return agent_graph
 
 logger = logging.getLogger("eris.agent.runner")
 
@@ -190,303 +213,87 @@ class AgentRunner:
     def fetch_models(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
         Dynamically discovers and verifies real, available models against active API keys
-        in the local credential vault (auth.db). Returns an empty list if no keys are configured.
+        in the local credential vault via modular ProviderAdapters.
         """
-        if self._cached_models and not force_refresh:
-            if time.time() - self._models_cached_at < self._cache_ttl_seconds:
-                return self._cached_models
+        models = model_catalog_service.fetch_models(force_refresh=force_refresh)
 
-        models: List[Dict[str, Any]] = []
-        credentials = get_all_active_credentials_sync()
-
-        if not credentials:
-            self._cached_models = []
-            self._models_cached_at = time.time()
-            return []
-
-        for cred in credentials:
-            provider = cred.get("provider", "").lower().strip()
-            key = cred.get("key", "").strip()
-            base_url = cred.get("base_url", "").strip()
-
-            if not key and provider != "ollama":
-                continue
-
-            # 1. Google Gemini
-            if provider == "gemini":
-                try:
-                    resp = requests.get(
-                        f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        for m in resp.json().get("models", []):
-                            if "generateContent" in m.get("supportedGenerationMethods", []):
-                                name = m["name"].replace("models/", "")
-                                name_lower = name.lower()
-                                if any(k in name_lower for k in [
-                                    "tts", "image", "embedding", "deep-research", "antigravity",
-                                    "computer-use", "aqa", "realtime"
-                                ]):
-                                    continue
-
-                                caps = ["Coding"]
-                                if any(k in name_lower for k in ["flash", "pro", "gemini-3", "gemini-2"]):
-                                    caps.extend(["Vision", "Audio", "Free"])
-                                if any(k in name_lower for k in ["thinking", "pro", "gemini-3.6", "exp"]):
-                                    caps.append("Reasoning")
-
-                                models.append({
-                                    "id": f"gemini/{name}",
-                                    "name": f"Gemini {name.replace('-', ' ').title()}",
-                                    "provider": "Google Gemini",
-                                    "context": "1M - 2M tokens",
-                                    "capabilities": list(set(caps)),
-                                    "speed": "120 tps" if "flash" in name_lower else "65 tps",
-                                    "cost": "Free Tier Available",
-                                    "status": "verified",
-                                    "verified": True,
-                                })
-                except Exception as ex:
-                    logger.warning(f"Key verification failed for Gemini: {ex}")
-
-            # 2. OpenRouter
-            elif provider == "openrouter":
-                # Ensure OpenRouter Auto dynamic router is ALWAYS pinned at the top
-                models.append({
-                    "id": "openrouter/auto",
-                    "name": "OpenRouter Auto (Smart Dynamic Router)",
-                    "provider": "OpenRouter",
-                    "context": "128k - 200k tokens",
-                    "capabilities": ["Coding", "Reasoning", "Vision", "Free"],
-                    "speed": "120+ tps",
-                    "cost": "Dynamic (Optimized)",
-                    "status": "verified",
-                    "verified": True,
-                })
-
-                try:
-                    resp = requests.get(
-                        "https://openrouter.ai/api/v1/models",
-                        headers={"Authorization": f"Bearer {key}"},
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        all_openrouter_models = resp.json().get("data", [])
-                        priority_keywords = [
-                            "auto", "deepseek", "claude", "gpt-4o", "llama-3.3", "qwen-2.5",
-                            "gemini-2.5", "mistral-large", "sonnet"
-                        ]
-                        seen_ids = {"openrouter/openrouter/auto", "openrouter/auto"}
-
-                        for m in all_openrouter_models:
-                            m_id = m.get("id", "")
-                            full_id = f"openrouter/{m_id}"
-                            if full_id in seen_ids:
-                                continue
-                            if any(kw in m_id.lower() for kw in priority_keywords):
-                                seen_ids.add(full_id)
-                                models.append({
-                                    "id": full_id,
-                                    "name": m.get("name", m_id),
-                                    "provider": "OpenRouter",
-                                    "context": f"{m.get('context_length', 128000) // 1000}k tokens",
-                                    "capabilities": ["Coding", "Reasoning"] + (["Free"] if ":free" in m_id else []),
-                                    "speed": "85 tps",
-                                    "cost": "Free Tier" if ":free" in m_id else "Pay per token",
-                                    "status": "verified",
-                                    "verified": True,
-                                })
-                                if len(models) >= 45:
-                                    break
-                except Exception as ex:
-                    logger.warning(f"Key verification failed for OpenRouter: {ex}")
-
-            # 3. OpenAI
-            elif provider == "openai":
-                try:
-                    resp = requests.get(
-                        "https://api.openai.com/v1/models",
-                        headers={"Authorization": f"Bearer {key}"},
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        for m in resp.json().get("data", []):
-                            m_id = m.get("id", "")
-                            m_lower = m_id.lower()
-                            if any(p in m_lower for p in ["gpt-4o", "o1", "o3", "gpt-4-turbo"]):
-                                models.append({
-                                    "id": f"openai/{m_id}",
-                                    "name": f"OpenAI {m_id}",
-                                    "provider": "OpenAI",
-                                    "context": "128k tokens",
-                                    "capabilities": ["Coding", "Reasoning"] + (["Vision"] if "4o" in m_lower else []),
-                                    "speed": "100 tps",
-                                    "cost": "Pay per token",
-                                    "status": "verified",
-                                    "verified": True,
-                                })
-                except Exception as ex:
-                    logger.warning(f"Key verification failed for OpenAI: {ex}")
-
-            # 4. Groq
-            elif provider == "groq":
-                try:
-                    resp = requests.get(
-                        "https://api.groq.com/openai/v1/models",
-                        headers={"Authorization": f"Bearer {key}"},
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        for m in resp.json().get("data", []):
-                            m_id = m.get("id", "")
-                            models.append({
-                                "id": f"groq/{m_id}",
-                                "name": f"Groq {m_id}",
-                                "provider": "Groq",
-                                "context": "128k tokens",
-                                "capabilities": ["Coding", "Speed"],
-                                "speed": "300+ tps",
-                                "cost": "Pay per token",
-                                "status": "verified",
-                                "verified": True,
-                            })
-                except Exception as ex:
-                    logger.warning(f"Key verification failed for Groq: {ex}")
-
-            # 5. Anthropic
-            elif provider == "anthropic":
-                try:
-                    resp = requests.get(
-                        "https://api.anthropic.com/v1/models",
-                        headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        for m in resp.json().get("data", []):
-                            m_id = m.get("id", "")
-                            models.append({
-                                "id": f"anthropic/{m_id}",
-                                "name": f"Claude {m_id.replace('claude-', '').title()}",
-                                "provider": "Anthropic",
-                                "context": "200k tokens",
-                                "capabilities": ["Coding", "Reasoning", "Vision"],
-                                "speed": "80 tps",
-                                "cost": "Pay per token",
-                                "status": "verified",
-                                "verified": True,
-                            })
-                except Exception as ex:
-                    logger.warning(f"Key verification failed for Anthropic: {ex}")
-
-            # 6. DeepSeek
-            elif provider == "deepseek":
-                try:
-                    resp = requests.get(
-                        "https://api.deepseek.com/models",
-                        headers={"Authorization": f"Bearer {key}"},
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        for m in resp.json().get("data", []):
-                            m_id = m.get("id", "")
-                            models.append({
-                                "id": f"deepseek/{m_id}",
-                                "name": f"DeepSeek {m_id.title()}",
-                                "provider": "DeepSeek",
-                                "context": "64k tokens",
-                                "capabilities": ["Coding", "Reasoning"],
-                                "speed": "90 tps",
-                                "cost": "Pay per token",
-                                "status": "verified",
-                                "verified": True,
-                            })
-                except Exception as ex:
-                    logger.warning(f"Key verification failed for DeepSeek: {ex}")
-
-            # 7. Nvidia NIM
-            elif provider in ("nvidia", "nvidia_nim"):
-                try:
-                    resp = requests.get(
-                        "https://integrate.api.nvidia.com/v1/models",
-                        headers={"Authorization": f"Bearer {key}"},
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        for m in resp.json().get("data", []):
-                            m_id = m.get("id", "")
-                            models.append({
-                                "id": f"nvidia_nim/{m_id}",
-                                "name": f"Nvidia {m_id.split('/')[-1].replace('-', ' ').title()}",
-                                "provider": "Nvidia NIM",
-                                "context": "128k tokens",
-                                "capabilities": ["Reasoning", "Coding"],
-                                "speed": "150 tps",
-                                "cost": "Included in NIM Tier",
-                                "status": "verified",
-                                "verified": True,
-                            })
-                except Exception as ex:
-                    logger.warning(f"Key verification failed for Nvidia NIM: {ex}")
-
-            # 8. Ollama Local
-            elif provider == "ollama":
-                ollama_url = base_url or "http://localhost:11434"
-                try:
-                    resp = requests.get(f"{ollama_url}/api/tags", timeout=2)
-                    if resp.status_code == 200:
-                        for m in resp.json().get("models", []):
-                            name = m.get("name", "")
-                            models.append({
-                                "id": f"ollama/{name}",
-                                "name": f"Ollama {name.title()}",
-                                "provider": "Ollama (Local)",
-                                "context": "Local RAM",
-                                "capabilities": ["Local", "Private", "Zero-Cost"],
-                                "speed": "Local GPU/CPU",
-                                "cost": "Free",
-                                "status": "verified",
-                                "verified": True,
-                            })
-                except Exception:
-                    logger.debug("Local Ollama endpoint not reachable.")
-
-            # 9. Custom Endpoint
-            elif provider == "custom" and base_url:
-                custom_url = base_url.rstrip("/")
-                endpoint = f"{custom_url}/models" if "/models" not in custom_url else custom_url
-                headers = {"Authorization": f"Bearer {key}"} if key else {}
-                try:
-                    resp = requests.get(endpoint, headers=headers, timeout=4)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        items = data.get("data", data.get("models", []))
-                        for m in items:
-                            m_id = m.get("id", m.get("name", ""))
-                            models.append({
-                                "id": f"custom/{m_id}",
-                                "name": f"Custom {m_id}",
-                                "provider": "Custom Endpoint",
-                                "context": "Custom",
-                                "capabilities": ["Coding"],
-                                "speed": "Custom",
-                                "cost": "Self-hosted",
-                                "status": "verified",
-                                "verified": True,
-                            })
-                except Exception as ex:
-                    logger.warning(f"Custom endpoint verification failed: {ex}")
+        # If active_model is deprecated (e.g. gemini-2.5 or 2.0-flash), auto-migrate to top recommended model
+        if self.active_model and any(dep in self.active_model.lower() for dep in ("gemini-2.5", "gemini-2.0-flash", "gemini-1.0")) and models:
+            old = self.active_model
+            self.set_active_model(models[0]["id"])
+            logger.info(f"Auto-migrated deprecated active model '{old}' to recommended working model '{self.active_model}'.")
 
         if self.active_model and not any(m["id"] == self.active_model for m in models):
             if not models:
                 self.active_model = None
 
         self._cached_models = models
-        self._models_cached_at = time.time()
         return models
 
-    def get_fallback_models(self) -> List[Dict[str, Any]]:
-        return []
+    def resolve_active_model(self) -> str:
+        """
+        Dynamically resolves the active model:
+        1. Checks current active_model in memory.
+        2. If unset, inspects the verified catalog from model_catalog_service and picks the top verified model.
+        3. Falls back to settings.DEFAULT_MODEL without hardcoded model strings.
+        """
+        if self.active_model and self.active_model.strip():
+            return self.active_model.strip()
+
+        models = self._cached_models or model_catalog_service.fetch_models()
+        if models:
+            resolved = models[0]["id"]
+            self.set_active_model(resolved)
+            return resolved
+
+        return getattr(settings, "DEFAULT_MODEL", "openrouter/auto")
+
+    async def spawn_subagent(self, spec_or_str: Any) -> str:
+        """
+        Executes a specialized subagent asynchronously with full persona directives.
+        Supports tag strings '[SPAWN_AGENT: SecurityAuditor|Audit AST]' or structured specs.
+        """
+        role = "coder"
+        objective = "Analyze task"
+        prereq = None
+
+        if isinstance(spec_or_str, dict):
+            role = spec_or_str.get("role", "coder")
+            objective = spec_or_str.get("objective", "Execute subtask")
+            prereq = spec_or_str.get("prerequisite_context")
+        elif isinstance(spec_or_str, str):
+            cleaned = spec_or_str.replace("[SPAWN_AGENT:", "").replace("]", "").strip()
+            if "|" in cleaned:
+                parts = cleaned.split("|", 1)
+                role = parts[0].strip()
+                objective = parts[1].strip()
+            else:
+                objective = cleaned
+
+        target_model = self.resolve_active_model()
+        res = await swarm_manager.execute_subagent(
+            role=role,
+            objective=objective,
+            active_model=target_model,
+            prerequisite_context=prereq,
+        )
+
+        if res.get("ok"):
+            return f"### Subagent [{res.get('role', role)}] Completed ({res.get('duration_seconds', 0)}s)\n\n{res.get('report')}"
+        return f"### Subagent [{res.get('role', role)}] Failed ({res.get('duration_seconds', 0)}s)\n\nError: {res.get('error')}"
+
+    async def spawn_swarm(
+        self, subagent_specs: List[Union[Dict[str, Any], SubagentTaskSpec]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Spawns an elastic swarm of parallel subagents with asynchronous DAG dependency coordination.
+        Independent subagents run concurrently; dependent subagents wait for prerequisite actions.
+        """
+        target_model = self.resolve_active_model()
+        return await swarm_manager.spawn_dag_swarm(
+            subagent_specs=subagent_specs,
+            active_model=target_model,
+        )
 
     async def stream_turn(
         self,
@@ -499,6 +306,12 @@ class AgentRunner:
         """
         Executes a multi-turn reasoning and tool invocation cycle using LangGraph.
         Emits SSE events strictly adhering to the frontend timeline contract.
+
+        Consumes the graph via stream_mode=["custom", "updates"]:
+          - "custom" carries live token/thought deltas pushed by reasoner_node via
+            get_stream_writer() as the model streams (real-time UX).
+          - "updates" carries each node's full state delta on completion, same shape
+            as resume_after_decision below, used for tool calls / timing / usage events.
         """
         model_to_use = active_model or self.active_model
         mode_to_use = execution_mode or self.execution_mode
@@ -507,13 +320,11 @@ class AgentRunner:
         if not model_to_use:
             discovered = await asyncio.to_thread(self.fetch_models)
             if discovered:
-                free_model = next(
-                    (m["id"] for m in discovered if "free" in m.get("cost", "").lower() or ":free" in m.get("id", "").lower()),
-                    discovered[0]["id"]
-                )
-                model_to_use = free_model
-                self.set_active_model(free_model)
-                logger.info(f"Auto-selected verified model {model_to_use} from active credentials.")
+                best_model = discovered[0]["id"]
+                model_to_use = best_model
+                self.set_active_model(best_model)
+                logger.info(f"Auto-selected verified recommended model {model_to_use} from active credentials.")
+
 
         if not model_to_use:
             yield {
@@ -572,143 +383,155 @@ class AgentRunner:
         node_timings: Dict[str, float] = {}
         sub_timings: Dict[str, float] = {}
 
-        inside_thought_tag = False
-
         try:
             node_start = time.perf_counter()
-            async for event in agent_graph.astream_events(initial_state, config=config, version="v2"):
-                ev_type = event.get("event")
-
-                # 1. Real-time token streaming to frontend (with thought tag filtering)
-                if ev_type == "on_chat_model_stream":
-                    chunk_obj = event.get("data", {}).get("chunk")
-                    if chunk_obj and getattr(chunk_obj, "content", None):
-                        c_text = str(chunk_obj.content)
-                        if c_text:
-                            # Detect entry into reasoning tags
-                            if any(tag in c_text.lower() for tag in ("<think>", "<thought>", "<thinking>", "<reasoning>")):
-                                inside_thought_tag = True
-                                c_text = re.sub(r"<(?:think|thought|thinking|reasoning)>", "", c_text, flags=re.IGNORECASE)
-
-                            # Detect exit from reasoning tags
-                            if any(tag in c_text.lower() for tag in ("</think>", "</thought>", "</thinking>", "</reasoning>")):
-                                inside_thought_tag = False
-                                c_text = re.sub(r"</(?:think|thought|thinking|reasoning)>", "", c_text, flags=re.IGNORECASE)
-
-                            if inside_thought_tag:
-                                if c_text.strip():
-                                    yield {
-                                        "type": "thought",
-                                        "text": c_text,
-                                    }
-                            elif c_text:
-                                yield {
-                                    "type": "chunk",
-                                    "text": c_text,
-                                }
+            graph = _get_agent_graph()
+            async for stream_mode, payload in graph.astream(
+                initial_state, config=config, stream_mode=["custom", "updates"]
+            ):
+                # 1. Real-time token/thought streaming pushed by reasoner_node via get_stream_writer()
+                if stream_mode == "custom":
+                    ev_type = payload.get("type") if isinstance(payload, dict) else None
+                    if ev_type == "chunk":
+                        text = payload.get("text", "")
+                        if text:
+                            yield {"type": "chunk", "text": text}
+                    elif ev_type == "thought":
+                        text = payload.get("text", "")
+                        if text.strip():
+                            yield {"type": "thought", "text": text}
                     continue
 
-                # 2. Process node state transitions on chain completion
-                if ev_type != "on_chain_end":
+                # 2. "updates": payload is {node_name: node_output} for nodes that just finished
+                if not isinstance(payload, dict):
                     continue
 
-                node_name = event.get("name")
-                if node_name not in ("reasoner", "tool_runner", "approval_gate", "learning_recorder"):
-                    continue
+                for node_name, node_output in payload.items():
+                    if node_name not in ("reasoner", "tool_runner", "approval_gate", "learning_recorder"):
+                        continue
+                    if not isinstance(node_output, dict):
+                        continue
 
-                node_output = event.get("data", {}).get("output")
-                if not isinstance(node_output, dict):
-                    continue
+                    node_elapsed = round((time.perf_counter() - node_start) * 1000.0, 2)
+                    node_timings[node_name] = node_elapsed
+                    yield {
+                        "type": "node_timing",
+                        "node": node_name,
+                        "duration_ms": node_elapsed,
+                    }
 
-                node_elapsed = round((time.perf_counter() - node_start) * 1000.0, 2)
-                node_timings[node_name] = node_elapsed
-                yield {
-                    "type": "node_timing",
-                    "node": node_name,
-                    "duration_ms": node_elapsed,
-                }
+                    # 2a. Reasoner node output
+                    if node_name == "reasoner":
+                        if "sub_timings" in node_output and isinstance(node_output["sub_timings"], dict):
+                            sub_timings.update(node_output["sub_timings"])
+                            yield {
+                                "type": "telemetry",
+                                "sub_timings": sub_timings,
+                            }
 
-                # 1. Reasoner node output
-                if node_name == "reasoner":
-                    if "sub_timings" in node_output and isinstance(node_output["sub_timings"], dict):
-                        sub_timings.update(node_output["sub_timings"])
-                        yield {
-                            "type": "telemetry",
-                            "sub_timings": sub_timings,
-                        }
+                        thought = node_output.get("current_thought", "")
+                        if thought:
+                            accumulated_thoughts.append(thought)
+                            yield {
+                                "type": "thought",
+                                "text": thought,
+                                "turn": node_output.get("turn_count", 1),
+                            }
 
-                    thought = node_output.get("current_thought", "")
-                    if thought:
-                        accumulated_thoughts.append(thought)
-                        yield {
-                            "type": "thought",
-                            "text": thought,
-                            "turn": node_output.get("turn_count", 1),
-                        }
+                        usage = node_output.get("token_usage")
+                        if usage:
+                            token_usage = usage
+                            yield {
+                                "type": "usage",
+                                "prompt_tokens": usage.get("prompt_tokens", 0),
+                                "completion_tokens": usage.get("completion_tokens", 0),
+                                "total_tokens": usage.get("total_tokens", 0),
+                                "model": node_output.get("active_model") or model_to_use,
+                            }
 
-                    usage = node_output.get("token_usage")
-                    if usage:
-                        token_usage = usage
-                        yield {
-                            "type": "usage",
-                            "prompt_tokens": usage.get("prompt_tokens", 0),
-                            "completion_tokens": usage.get("completion_tokens", 0),
-                            "total_tokens": usage.get("total_tokens", 0),
-                            "model": node_output.get("active_model") or model_to_use,
-                        }
+                        node_model = node_output.get("active_model")
+                        if node_model and node_model != model_to_use:
+                            model_to_use = node_model
+                            self.set_active_model(node_model)
+                            yield {
+                                "type": "model_switch",
+                                "model": node_model,
+                                "text": f"Switched active model to {node_model}",
+                            }
 
-                    node_model = node_output.get("active_model")
-                    if node_model and node_model != model_to_use:
-                        model_to_use = node_model
-                        self.set_active_model(node_model)
-                        yield {
-                            "type": "model_switch",
-                            "model": node_model,
-                            "text": f"Switched active model to {node_model}",
-                        }
+                        msgs = node_output.get("messages", [])
+                        if msgs:
+                            last_msg = msgs[-1]
+                            if isinstance(last_msg, AIMessage):
+                                has_tool_calls = bool(getattr(last_msg, "tool_calls", None))
+                                # Only set final_reply if it's not purely intermediate tool dispatch
+                                if last_msg.content and not has_tool_calls:
+                                    final_reply = str(last_msg.content)
 
-                    msgs = node_output.get("messages", [])
-                    if msgs:
-                        last_msg = msgs[-1]
-                        if isinstance(last_msg, AIMessage):
-                            has_tool_calls = bool(getattr(last_msg, "tool_calls", None))
-                            # Only set final_reply if it's not purely intermediate tool dispatch
-                            if last_msg.content and not has_tool_calls:
-                                final_reply = str(last_msg.content)
+                                if has_tool_calls:
+                                    for tc in last_msg.tool_calls:
+                                        t_name = tc.get("name", "")
+                                        t_args = tc.get("args", {})
+                                        tc_id = tc.get("id") or str(uuid.uuid4())
+                                        if t_name == "render_ui":
+                                            comp = t_args.get("component") if isinstance(t_args, dict) else "unknown"
+                                            raw_props = t_args.get("props", {}) if isinstance(t_args, dict) else {}
+                                            if isinstance(raw_props, str):
+                                                try:
+                                                    props = json.loads(raw_props)
+                                                except Exception:
+                                                    props = {"raw": raw_props}
+                                            else:
+                                                props = raw_props if isinstance(raw_props, dict) else {}
+                                            status = t_args.get("status", "ready") if isinstance(t_args, dict) else "ready"
+                                            yield {
+                                                "type": "ui_intent",
+                                                "id": tc_id,
+                                                "component": comp,
+                                                "props": props,
+                                                "status": status,
+                                            }
+                                        elif t_name == "ask_question":
+                                            yield {
+                                                "type": "elicitation",
+                                                "question": t_args if isinstance(t_args, dict) else {
+                                                    "id": tc_id,
+                                                    "prompt": str(t_args),
+                                                    "mode": "single",
+                                                    "options": [],
+                                                },
+                                            }
+                                        elif t_name == "search_web":
+                                            yield {
+                                                "type": "search",
+                                                "query": t_args.get("query", "") if isinstance(t_args, dict) else str(t_args),
+                                                "status": "searching",
+                                                "results": [],
+                                            }
+                                        else:
+                                            yield {
+                                                "type": "action",
+                                                "text": f"Invoking tool: {t_name}",
+                                                "tool": t_name,
+                                                "args": t_args,
+                                            }
 
-                            if has_tool_calls:
-                                for tc in last_msg.tool_calls:
-                                    t_name = tc.get("name", "")
-                                    t_args = tc.get("args", {})
-                                    if t_name == "search_web":
-                                        yield {
-                                            "type": "search",
-                                            "query": t_args.get("query", ""),
-                                            "status": "searching",
-                                            "results": [],
-                                        }
-                                    else:
-                                        yield {
-                                            "type": "action",
-                                            "text": f"Invoking tool: {t_name}",
-                                            "tool": t_name,
-                                            "args": t_args,
-                                        }
+                    # 2b. Tool runner node output
+                    elif node_name == "tool_runner":
+                        tools_run = node_output.get("executed_tools", [])
+                        for t in tools_run:
+                            if t.get("name") in ("render_ui", "ask_question"):
+                                continue  # Visual block is dispatched via ui_intent/elicitation; avoid duplicate text noise
+                            yield {
+                                "type": "observation",
+                                "text": f"[{t.get('name', 'Tool')}]: {t.get('output', '')[:120]}...",
+                            }
+                            tool_calls.append(t)
 
-                # 2. Tool runner node output
-                elif node_name == "tool_runner":
-                    tools_run = node_output.get("executed_tools", [])
-                    for t in tools_run:
-                        yield {
-                            "type": "observation",
-                            "text": f"[{t.get('name', 'Tool')}]: {t.get('output', '')[:120]}...",
-                        }
-                        tool_calls.append(t)
-
-                node_start = time.perf_counter()
+                    node_start = time.perf_counter()
 
             # Check for human-in-the-loop interrupts
-            state_snapshot = agent_graph.get_state(config)
+            state_snapshot = graph.get_state(config)
             if state_snapshot.tasks:
                 for task in state_snapshot.tasks:
                     if hasattr(task, "interrupts") and task.interrupts:
@@ -786,11 +609,13 @@ class AgentRunner:
         }
 
         final_reply = ""
+        accumulated_thoughts: List[str] = []
         tool_calls: List[Dict[str, Any]] = []
 
         try:
             resume_command = Command(resume=decision)
-            async for step in agent_graph.astream(resume_command, config=config):
+            graph = _get_agent_graph()
+            async for step in graph.astream(resume_command, config=config):
                 for node_name, node_output in step.items():
                     if not isinstance(node_output, dict):
                         continue
@@ -798,6 +623,7 @@ class AgentRunner:
                     if node_name == "reasoner":
                         thought = node_output.get("current_thought", "")
                         if thought:
+                            accumulated_thoughts.append(thought)
                             yield {
                                 "type": "thought",
                                 "text": thought,
@@ -824,9 +650,12 @@ class AgentRunner:
             if final_reply:
                 self.append_to_user_history(safe_user, "assistant", final_reply)
 
+            combined_reasoning = "\n\n".join(accumulated_thoughts) if accumulated_thoughts else None
+
             yield {
                 "type": "done",
-                "reply": final_reply or "Decision processed successfully.",
+                "reply": final_reply,
+                "reasoning": combined_reasoning,
                 "toolCalls": tool_calls,
                 "model": model_to_use,
                 "memory_updated": True,

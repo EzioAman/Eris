@@ -1,7 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Globe, ExternalLink, Loader2, Code2, Shield, Search, CheckCircle2, Sparkles, Terminal } from 'lucide-react';
-import { cn } from '../../lib/utils';
 import type { ActiveThinkingState, SearchStepItem } from './chatTypes';
 
 export interface ClaudeThinkingBlockProps {
@@ -21,344 +18,285 @@ export const ClaudeThinkingBlock: React.FC<ClaudeThinkingBlockProps> = ({
   activeThinking,
   reasoningSteps = [],
   reasoning = '',
-  searches = [],
-  switches = [],
   durationSeconds,
   isDarkMode = true,
-  defaultExpanded = false,
+  defaultExpanded,
 }) => {
-  const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded);
-  const [timerCount, setTimerCount] = useState<number>(0);
+  const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded ?? isLive);
+  const [elapsed, setElapsed] = useState<number>(0);
 
-  // Live timer for ongoing thinking
+  // Elapsed-seconds clock, active while thinking is live
   useEffect(() => {
     if (!isLive) return;
     const start = activeThinking?.startTime || Date.now();
-    const interval = setInterval(() => {
-      setTimerCount(Math.max(1, Math.floor((Date.now() - start) / 1000)));
+    const id = setInterval(() => {
+      setElapsed(Math.max(1, Math.floor((Date.now() - start) / 1000)));
     }, 1000);
-    return () => clearInterval(interval);
+    return () => clearInterval(id);
   }, [isLive, activeThinking?.startTime]);
 
+  // Extract thoughts from activeThinking or reasoningSteps
+  const thoughts: string[] = useMemo(() => {
+    if (activeThinking?.thoughts && activeThinking.thoughts.length > 0) {
+      return activeThinking.thoughts.filter(Boolean);
+    }
+    if (reasoningSteps && reasoningSteps.length > 0) {
+      const list = reasoningSteps.map((s) => s.thought || '').filter(Boolean);
+      if (list.length > 0) return list;
+    }
+    if (reasoning && reasoning.trim()) {
+      return reasoning
+        .split(/\n\n+/)
+        .map((r) => r.trim())
+        .filter(Boolean);
+    }
+    return [];
+  }, [activeThinking?.thoughts, reasoningSteps, reasoning]);
+
+  const latestThought = thoughts[thoughts.length - 1] || '';
+
+  // Expand automatically when thinking begins
+  useEffect(() => {
+    if (isLive) {
+      setIsExpanded(true);
+    }
+  }, [isLive]);
+
   const displaySeconds = isLive
-    ? timerCount
-    : (durationSeconds ?? (reasoningSteps.length > 0 ? reasoningSteps.length * 2 : 4));
+    ? elapsed
+    : (durationSeconds ?? (elapsed > 0 ? elapsed : Math.max(1, thoughts.length * 2)));
 
-  const activeSwitches = (activeThinking?.switches && activeThinking.switches.length > 0)
-    ? activeThinking.switches
-    : switches;
+  const textColor = isDarkMode ? '#87888b' : '#64748b';
+  const borderColor = isDarkMode ? 'rgba(255,255,255,.09)' : 'rgba(0,0,0,.12)';
 
-  // Resolve searches (live stream or finalized)
-  const allSearches: SearchStepItem[] = useMemo(() => {
-    if (activeThinking?.searches && activeThinking.searches.length > 0) {
-      return activeThinking.searches;
-    }
-    return searches;
-  }, [activeThinking?.searches, searches]);
-
-  // Extract clean reasoning text, filtering out mechanical boilerplate
-  const cleanReasoning = useMemo(() => {
-    const raw = activeThinking?.reasoning || reasoning || '';
-    if (raw.trim()) {
-      return raw.trim();
-    }
-
-    // Fallback to non-mechanical thoughts from reasoningSteps (for backward compatibility)
-    const thoughts = (activeThinking?.thoughts && activeThinking.thoughts.length > 0)
-      ? activeThinking.thoughts
-      : reasoningSteps.map(s => s.thought || '').filter(Boolean);
-
-    const filtered = thoughts.filter(t => {
-      const lower = t.toLowerCase();
-      if (lower.includes('evaluating workspace state and planning next actions')) return false;
-      if (lower.startsWith('step ') && lower.length < 20) return false;
-      return true;
-    });
-
-    return filtered.join('\n\n').trim();
-  }, [activeThinking?.reasoning, activeThinking?.thoughts, reasoning, reasoningSteps]);
-
-  // Extract any subagent actions
   const subagentActions = useMemo(() => {
-    const actions = (activeThinking?.actions && activeThinking.actions.length > 0)
-      ? activeThinking.actions
-      : reasoningSteps.flatMap(s => s.actions || []);
-
+    const actions =
+      activeThinking?.actions && activeThinking.actions.length > 0
+        ? activeThinking.actions
+        : reasoningSteps.flatMap((s) => s.actions || []);
     return actions
-      .filter(act => act.startsWith('SPAWN_AGENT'))
-      .map(act => {
-        const spec = act.replace(/^SPAWN_AGENT\s*/, '');
-        const parts = spec.split('|');
-        return {
-          role: parts[0] || 'Subagent',
-          objective: parts[1] || spec,
-        };
+      .filter((a) => a.startsWith('SPAWN_AGENT'))
+      .map((a) => {
+        const spec = a.replace(/^SPAWN_AGENT\s*/, '');
+        const [role, objective] = spec.split('|');
+        return { role: role || 'Subagent', objective: objective || spec };
       });
   }, [activeThinking?.actions, reasoningSteps]);
 
-  // Extract non-subagent tool actions (e.g. open_youtube_on_user_browser, etc.)
   const toolActions = useMemo(() => {
-    const actions = (activeThinking?.actions && activeThinking.actions.length > 0)
-      ? activeThinking.actions
-      : reasoningSteps.flatMap(s => s.actions || []);
-
+    const actions =
+      activeThinking?.actions && activeThinking.actions.length > 0
+        ? activeThinking.actions
+        : reasoningSteps.flatMap((s) => s.actions || []);
     return actions
-      .filter(act => !act.startsWith('SPAWN_AGENT'))
-      .map(act => act.replace(/^CALL_TOOL\s*/i, '').trim())
+      .filter((a) => !a.startsWith('SPAWN_AGENT'))
+      .map((a) => a.replace(/^CALL_TOOL\s*/i, '').trim())
       .filter(Boolean);
   }, [activeThinking?.actions, reasoningSteps]);
 
-  const searchCount = allSearches.length;
+  // If there are no thoughts, no reasoning, and not live, don't show an empty box
+  if (!isLive && thoughts.length === 0 && subagentActions.length === 0 && toolActions.length === 0) {
+    return null;
+  }
+
+  // Live mode renders every already-arrived thought as settled text, plus the
+  // in-progress last one rendered as-is with a caret. The backend delivers it
+  // incrementally, so no client-side typewriter is needed or wanted here —
+  // stacking one on top of already-incremental data is what caused the
+  // restart-from-zero stutter. React just re-renders the growing string as
+  // new characters arrive, which reads as typing for free.
+  const settledThoughts = isLive && thoughts.length > 1 ? thoughts.slice(0, -1) : thoughts;
+  const liveThought = isLive ? latestThought : '';
 
   return (
-    <div className="my-1.5 select-text font-sans w-full">
-      {/* Slim Activity Row: ⌄ • Thought for Xs · searched Y sources */}
-      <button
-        type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
-        className={cn(
-          'w-full flex items-center gap-1.5 py-1 text-xs text-left cursor-pointer transition-colors select-none',
-          isDarkMode
-            ? 'text-neutral-400 hover:text-neutral-200'
-            : 'text-neutral-600 hover:text-neutral-900'
-        )}
-      >
-        <ChevronRight
-          className={cn(
-            'w-3.5 h-3.5 shrink-0 transition-transform duration-200',
-            isExpanded && 'rotate-90',
-            isDarkMode ? 'text-neutral-500' : 'text-neutral-400'
-          )}
-        />
-        <span
-          className={cn(
-            'size-1.5 rounded-full shrink-0 transition-colors',
-            isLive
-              ? 'bg-amber-400 animate-pulse'
-              : isDarkMode ? 'bg-neutral-500' : 'bg-neutral-400'
-          )}
-        />
-        <span className="font-medium truncate">
-          {isLive ? `Thinking (${displaySeconds}s)…` : `Thought for ${displaySeconds}s`}
-          {searchCount > 0 && (
-            <span className="opacity-70 font-normal">
-              {' · '}searched {searchCount} source{searchCount > 1 ? 's' : ''}
+    <div style={styles.body}>
+      <div style={styles.wrap}>
+        {/* Header row */}
+        <div
+          style={{ ...styles.thead, color: textColor }}
+          onClick={() => setIsExpanded((e) => !e)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => e.key === 'Enter' && setIsExpanded((v) => !v)}
+        >
+          {isLive && (
+            <span style={styles.dots}>
+              <Dot delay={0} color={textColor} />
+              <Dot delay={150} color={textColor} />
+              <Dot delay={300} color={textColor} />
             </span>
           )}
-        </span>
 
-        {/* Dynamic Model Switch Pill */}
-        {activeSwitches.length > 0 && (
+          <span>{isLive ? 'Thinking' : `Thought for ${displaySeconds}s`}</span>
+
           <span
-            className={cn(
-              'inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full border ml-1',
-              isDarkMode
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            style={{
+              ...styles.chev,
+              borderRightColor: textColor,
+              borderBottomColor: textColor,
+              transform: isExpanded
+                ? 'rotate(-135deg) translateY(1px)'
+                : 'rotate(45deg) translateY(-1px)',
+            }}
+          />
+        </div>
+
+        {/* Expandable Reasoning Panel */}
+        <div
+          style={{
+            ...styles.panel,
+            maxHeight: isExpanded ? 600 : 0,
+          }}
+        >
+          <div
+            style={{
+              ...styles.reasoning,
+              borderLeftColor: borderColor,
+              color: textColor,
+            }}
+          >
+            {/* Completed thoughts */}
+            {settledThoughts.map((p, i) => (
+              <p key={i} style={{ margin: i === 0 ? '0 0 10px 0' : '10px 0' }}>
+                {p}
+              </p>
+            ))}
+
+            {/* Currently streaming thought — rendered directly, no local typewriter */}
+            {isLive && liveThought && (
+              <p style={{ margin: settledThoughts.length === 0 ? '0 0 10px 0' : '10px 0' }}>
+                {liveThought}
+                <Caret color={textColor} />
+              </p>
             )}
-          >
-            Auto-switched ({activeSwitches.length})
-          </span>
-        )}
-      </button>
 
-      {/* Expanded Reasoning & Search Log (ActivityLog) */}
-      <AnimatePresence initial={false}>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
-            className="overflow-hidden"
-          >
-            <div
-              className={cn(
-                'ml-[19px] pl-3 border-l py-2 space-y-3 text-xs transition-colors',
-                isDarkMode ? 'border-neutral-800 text-neutral-300' : 'border-neutral-200 text-neutral-700'
-              )}
-            >
-              {/* Dynamic Model Switch Notices */}
-              {activeSwitches.map((m, idx) => (
-                <div
-                  key={`sw-${idx}`}
-                  className={cn(
-                    'p-2 rounded-lg border flex items-center gap-2 text-[11px]',
-                    isDarkMode
-                      ? 'border-cyan-500/20 bg-cyan-500/5 text-cyan-300'
-                      : 'border-blue-200 bg-blue-50 text-blue-800'
-                  )}
-                >
-                  <span className="font-semibold">❖ Auto-switched to live model:</span>
-                  <span className="font-mono underline">{m}</span>
-                </div>
-              ))}
-
-              {/* Subagent Swarm Delegation */}
-              {subagentActions.map((sa, idx) => {
-                const r = sa.role.toLowerCase();
-                const icon = r.includes('code') || r.includes('dev') ? (
-                  <Code2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                ) : r.includes('sec') || r.includes('audit') ? (
-                  <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                ) : r.includes('research') || r.includes('search') ? (
-                  <Search className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                ) : r.includes('test') || r.includes('verify') ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                ) : (
-                  <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                );
-
-                return (
-                  <div
-                    key={`sa-${idx}`}
-                    className={cn(
-                      'p-3 rounded-xl border flex flex-col gap-2 text-xs transition-all shadow-xs',
-                      isDarkMode
-                        ? 'border-violet-500/30 bg-violet-500/10 text-violet-200'
-                        : 'border-violet-200 bg-violet-50/80 text-violet-900'
-                    )}
+            {/* Subagent and tool execution context */}
+            {subagentActions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2.5 not-italic">
+                {subagentActions.map((sub, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono border"
+                    style={{
+                      borderColor,
+                      background: isDarkMode ? 'rgba(255,255,255,.04)' : 'rgba(0,0,0,.04)',
+                    }}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        {icon}
-                        <span className="font-bold text-xs">Spawned Subagent:</span>
-                        <span className="px-2 py-0.5 rounded-md text-[11px] font-mono font-bold border border-violet-400/40 bg-violet-500/20 text-violet-300">
-                          {sa.role}
-                        </span>
-                      </div>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-medium">
-                        Active Swarm
-                      </span>
-                    </div>
-                    <div className="text-[11px] opacity-90 leading-relaxed font-mono bg-black/20 dark:bg-black/40 p-2 rounded-lg border border-white/5">
-                      <span className="text-neutral-400">Assigned Task: </span>
-                      <span className="text-white font-medium">{sa.objective}</span>
-                    </div>
-                  </div>
-                );
-              })}
+                    <span>❖</span>
+                    <span>{sub.role}:</span>
+                    <span className="opacity-80 truncate max-w-[200px]">{sub.objective}</span>
+                  </span>
+                ))}
+              </div>
+            )}
 
-              {/* Function / Tool Invocations Markup */}
-              {toolActions.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                  {toolActions.map((rawAct, idx) => {
-                    const act = rawAct.replace(/^CALL_TOOL\s*/i, '').trim();
-                    const spaceIdx = act.indexOf(' ');
-                    const name = spaceIdx > -1 ? act.slice(0, spaceIdx) : act;
-                    const arg = spaceIdx > -1 ? act.slice(spaceIdx + 1).trim() : '';
-
-                    const isCmd = name.includes('command') || name.includes('bash');
-                    const isFind = name.includes('grep') || name.includes('search');
-                    const isWeb = name.includes('browser') || name.includes('url') || name.includes('fetch');
-
-                    return (
-                      <span
-                        key={`act-${idx}`}
-                        className={cn(
-                          'inline-flex items-center gap-1.5 font-mono text-[11px] px-2 py-0.5 rounded-md border transition-colors select-text',
-                          isDarkMode
-                            ? 'bg-cyan-500/10 border-cyan-500/25 text-cyan-300'
-                            : 'bg-cyan-50 border-cyan-200 text-cyan-800'
-                        )}
-                        title={act}
-                      >
-                        {isCmd ? (
-                          <Terminal className="w-3 h-3 text-emerald-400 shrink-0" />
-                        ) : isFind ? (
-                          <Search className="w-3 h-3 text-sky-400 shrink-0" />
-                        ) : isWeb ? (
-                          <Globe className="w-3 h-3 text-blue-400 shrink-0" />
-                        ) : (
-                          <Code2 className="w-3 h-3 text-cyan-400 shrink-0" />
-                        )}
-                        <span className="font-semibold uppercase tracking-tight text-[10px]">{name}</span>
-                        {arg && (
-                          <span className="truncate max-w-[200px] opacity-80">{arg}</span>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Live Action Pill */}
-              {isLive && activeThinking?.currentAction && (
-                <div
-                  className={cn(
-                    'p-2 rounded-lg border flex items-center gap-2 text-[11px] animate-pulse',
-                    isDarkMode
-                      ? 'border-indigo-500/20 bg-indigo-500/5 text-indigo-300'
-                      : 'border-indigo-200 bg-indigo-50/50 text-indigo-800'
-                  )}
-                >
-                  <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                  <span>{activeThinking.currentAction}</span>
-                </div>
-              )}
-
-              {/* Authentic Reasoning Text */}
-              {cleanReasoning ? (
-                <div className="leading-relaxed whitespace-pre-wrap text-[13px] opacity-90 font-sans">
-                  {cleanReasoning}
-                </div>
-              ) : isLive ? (
-                <div className="text-[12px] text-neutral-400 italic flex items-center gap-1.5">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>Synthesizing plan & actions…</span>
-                </div>
-              ) : null}
-
-              {/* Web Searches Trace (Globe Icon + Query + Results) */}
-              {allSearches.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  {allSearches.map((s, sIdx) => (
-                    <div key={sIdx} className="space-y-1.5">
-                      <div className="flex items-center gap-2 text-[12px]">
-                        <Globe className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <span className="font-mono text-neutral-300">"{s.query}"</span>
-                        {s.status === 'searching' && (
-                          <Loader2 className="w-3 h-3 animate-spin text-neutral-400 shrink-0" />
-                        )}
-                      </div>
-
-                      {s.results && s.results.length > 0 && (
-                        <div className="pl-5 space-y-1">
-                          {s.results.map((res, rIdx) => (
-                            <div key={rIdx} className="flex items-center gap-2 text-[11px]">
-                              <span className="size-1 rounded-full bg-neutral-600 shrink-0" />
-                              {res.url ? (
-                                <a
-                                  href={res.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="hover:underline text-neutral-300 truncate max-w-md flex items-center gap-1"
-                                >
-                                  <span>{res.title || res.domain}</span>
-                                  <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                                </a>
-                              ) : (
-                                <span className="truncate max-w-md text-neutral-300">
-                                  {res.title || res.domain}
-                                </span>
-                              )}
-                              {res.domain && res.domain !== 'web' && (
-                                <span className="text-[10px] px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-neutral-400">
-                                  {res.domain}
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            {toolActions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2 not-italic">
+                {toolActions.map((act, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono border"
+                    style={{
+                      borderColor,
+                      background: isDarkMode ? 'rgba(255,255,255,.03)' : 'rgba(0,0,0,.03)',
+                    }}
+                  >
+                    <span>⚡</span>
+                    <span className="truncate max-w-[240px]">{act}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
+};
+
+export default ClaudeThinkingBlock;
+
+function Dot({ delay, color = '#87888b' }: { delay: number; color?: string }) {
+  return (
+    <i
+      style={{
+        width: 4,
+        height: 4,
+        borderRadius: '50%',
+        background: color,
+        display: 'inline-block',
+        animation: `reasoning-breathe 1s ease-in-out ${delay}ms infinite`,
+      }}
+    />
+  );
+}
+
+function Caret({ color = '#87888b' }: { color?: string }) {
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        width: 1.5,
+        height: 13,
+        background: color,
+        marginLeft: 2,
+        verticalAlign: -2,
+        animation: 'reasoning-blink .9s step-start infinite',
+      }}
+    />
+  );
+}
+
+if (typeof document !== 'undefined' && !document.getElementById('reasoning-trace-kf')) {
+  const style = document.createElement('style');
+  style.id = 'reasoning-trace-kf';
+  style.textContent = `
+    @keyframes reasoning-breathe { 0%,100%{ opacity:.25; } 50%{ opacity:.9; } }
+    @keyframes reasoning-blink { 50%{ opacity:0; } }
+    @media (prefers-reduced-motion: reduce) {
+      [style*="reasoning-breathe"], [style*="reasoning-blink"] { animation: none !important; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  body: {
+    display: 'flex',
+    padding: '4px 0 10px 0',
+    fontFamily: "-apple-system, 'Segoe UI', sans-serif",
+    width: '100%',
+  },
+  wrap: { width: '100%' },
+  thead: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 7,
+    cursor: 'pointer',
+    userSelect: 'none',
+    fontSize: 13.5,
+    fontWeight: 500,
+  },
+  dots: { display: 'inline-flex', gap: 3 },
+  chev: {
+    width: 6,
+    height: 6,
+    borderRight: '1.4px solid #87888b',
+    borderBottom: '1.4px solid #87888b',
+    transition: 'transform .3s cubic-bezier(.16,1,.3,1)',
+    flexShrink: 0,
+    marginLeft: 1,
+  },
+  panel: {
+    overflow: 'hidden',
+    transition: 'max-height .4s cubic-bezier(.16,1,.3,1)',
+  },
+  reasoning: {
+    marginTop: 10,
+    paddingLeft: 12,
+    borderLeft: '2px solid rgba(255,255,255,.09)',
+    fontSize: 13.5,
+    lineHeight: 1.65,
+    fontStyle: 'italic',
+  },
 };

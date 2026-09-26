@@ -24,7 +24,7 @@ from backend.app.services.update_service import (
 logger = logging.getLogger("eris.tools.updater")
 
 TOOL_NAME = "check_and_apply_update"
-TOOL_DESCRIPTION = "Checks for ERIS updates, downloads the setup installer, or triggers autonomous self-update installation. Args: 'check' | 'download' | 'apply' | 'status'"
+TOOL_DESCRIPTION = "Checks for ERIS application updates on GitHub, downloads the update installer, or triggers application software self-updating. Use when explicitly checking, downloading, or applying software updates to ERIS. Do NOT use for casual greetings, conversation, or normal chat."
 
 
 def execute(args: str = "check") -> str:

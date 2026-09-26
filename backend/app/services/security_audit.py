@@ -9,7 +9,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from fastapi.testclient import TestClient
 
-from backend.app.agent.core_tools import CoreToolbox
+try:
+    from app.agent.core_tools import CoreToolbox
+except ImportError:
+    from backend.app.agent.core_tools import CoreToolbox
 
 
 class SecurityProbeResult(BaseModel):

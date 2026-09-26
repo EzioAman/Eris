@@ -4,17 +4,25 @@ Delegates cleanly to app.agent.runner.AgentRunner and LangGraph.
 """
 
 from typing import Any, AsyncGenerator, Dict, List, Optional
-try:
-    from backend.app.agent.runner import AgentRunner, runner
-except ImportError:
-    from app.agent.runner import AgentRunner, runner
+def _get_runner():
+    try:
+        from backend.app.agent.runner import runner
+    except ImportError:
+        from app.agent.runner import runner
+    return runner
 
 
 class AgentEngine:
     """Delegating adapter preserving interface of legacy AgentEngine."""
 
     def __init__(self):
-        self._runner = runner
+        self._runner_instance = None
+
+    @property
+    def _runner(self):
+        if self._runner_instance is None:
+            self._runner_instance = _get_runner()
+        return self._runner_instance
 
     @property
     def active_model(self) -> str:

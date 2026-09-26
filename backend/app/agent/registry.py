@@ -1,37 +1,16 @@
+import hashlib
 import importlib.util
+import inspect
+import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, create_model
 
 try:
-    from backend.app.agent.core_tools import CoreToolbox
-    from backend.app.agent.tool_synthesizer import create_custom_tool
-    from backend.app.config import settings
-    from backend.app.schemas.tools import (
-        ChangeModelInput,
-        CreateFolderInput,
-        CreateToolInput,
-        GreetingInput,
-        GrepSearchInput,
-        ListDirectoryInput,
-        OpenBrowserInput,
-        PlayYoutubeInput,
-        ReadFileInput,
-        RiskLevel,
-        RunCommandInput,
-        ScrapeWebpageInput,
-        SearchKnowledgeVaultInput,
-        SearchWebInput,
-        SendEmailInput,
-        ToolDefinition,
-        ViewFileInput,
-        WriteFileInput,
-    )
-    from backend.app.services.rag_service import rag_vault
-except ImportError:
     from app.agent.core_tools import CoreToolbox
     from app.agent.tool_synthesizer import create_custom_tool
     from app.config import settings
@@ -45,6 +24,7 @@ except ImportError:
         OpenBrowserInput,
         PlayYoutubeInput,
         ReadFileInput,
+        RenderUIInput,
         RiskLevel,
         RunCommandInput,
         ScrapeWebpageInput,
@@ -54,8 +34,36 @@ except ImportError:
         ToolDefinition,
         ViewFileInput,
         WriteFileInput,
+        AskQuestionInput,
     )
     from app.services.rag_service import rag_vault
+except ImportError:
+    from backend.app.agent.core_tools import CoreToolbox
+    from backend.app.agent.tool_synthesizer import create_custom_tool
+    from backend.app.config import settings
+    from backend.app.schemas.tools import (
+        ChangeModelInput,
+        CreateFolderInput,
+        CreateToolInput,
+        GreetingInput,
+        GrepSearchInput,
+        ListDirectoryInput,
+        OpenBrowserInput,
+        PlayYoutubeInput,
+        ReadFileInput,
+        RenderUIInput,
+        RiskLevel,
+        RunCommandInput,
+        ScrapeWebpageInput,
+        SearchKnowledgeVaultInput,
+        SearchWebInput,
+        SendEmailInput,
+        ToolDefinition,
+        ViewFileInput,
+        WriteFileInput,
+        AskQuestionInput,
+    )
+    from backend.app.services.rag_service import rag_vault
 
 logger = logging.getLogger("eris.agent.registry")
 
@@ -70,9 +78,12 @@ class ToolRegistry:
     def __init__(self):
         self._tools: Dict[str, ToolDefinition] = {}
         self._initialized: bool = False
+        self._tool_embedding_cache: Dict[str, List[float]] = {}
+        self._min_plausible_relevance: float = 0.58
+        self._noise_floor: float = 1.25
 
     def initialize(self, force_refresh: bool = False) -> None:
-        """Loads core and dynamic tools into the registry."""
+        """Loads core and dynamic tools into the registry and precomputes capability embeddings."""
         if self._initialized and not force_refresh:
             return
 
@@ -80,10 +91,101 @@ class ToolRegistry:
         self._register_core_tools()
         self._register_dynamic_tools()
         self._initialized = True
-        logger.info(f"Tool registry initialized with {len(self._tools)} tools.")
+        self._recompute_tool_embeddings()
+        logger.info(f"Tool registry initialized with {len(self._tools)} tools and {len(self._tool_embedding_cache)} embeddings.")
+
+    # --- Tool embedding cache (disk-persisted + parallel cold-fill) ---------
+    #
+    # Previously this section made one live embedding API call per tool,
+    # sequentially - with 22 tools at ~0.7-1.2s per call, that was a ~20s
+    # blocking stall, and since get_relevant_tools() is invoked synchronously
+    # from reasoner_node (no asyncio.to_thread), it stalled the entire event
+    # loop, not just the triggering request. Now:
+    #   1. Embeddings are cached to disk keyed by a hash of each tool's doc
+    #      string, so a tool whose description hasn't changed is never
+    #      re-embedded across restarts.
+    #   2. Any remaining cache misses (new/changed tools, or a fresh install
+    #      with no cache yet) are embedded concurrently via a thread pool,
+    #      since each call is a blocking network request - the API/network,
+    #      not the CPU, is the bottleneck, so this is safe to parallelize.
+
+    def _tool_embedding_cache_path(self) -> Path:
+        return settings.WORKSPACE_PATH / "memory" / "tool_embeddings_cache.json"
+
+    def _load_persisted_tool_embeddings(self) -> Dict[str, Dict[str, Any]]:
+        path = self._tool_embedding_cache_path()
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as ex:
+            logger.warning(f"Could not read tool embedding cache ({path}): {ex}")
+            return {}
+
+    def _save_persisted_tool_embeddings(self, data: Dict[str, Dict[str, Any]]) -> None:
+        path = self._tool_embedding_cache_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+        except Exception as ex:
+            logger.warning(f"Could not persist tool embedding cache ({path}): {ex}")
+
+    @staticmethod
+    def _doc_hash(doc: str) -> str:
+        return hashlib.sha256(doc.encode("utf-8")).hexdigest()
+
+    def _recompute_tool_embeddings(self) -> None:
+        """Precomputes vector embeddings for each tool's name and dual-boundary description,
+        using the disk cache for unchanged tools and a thread pool for any cache misses."""
+        persisted = self._load_persisted_tool_embeddings()
+        docs_by_tool: Dict[str, str] = {}
+        to_compute: List[tuple] = []  # (tool_name, doc)
+
+        for name, tool_def in self._tools.items():
+            doc = f"Tool: {name}. Description: {tool_def.description}"
+            docs_by_tool[name] = doc
+            doc_hash = self._doc_hash(doc)
+
+            cached_entry = persisted.get(name)
+            if cached_entry and cached_entry.get("hash") == doc_hash and cached_entry.get("vector"):
+                self._tool_embedding_cache[name] = cached_entry["vector"]
+            else:
+                to_compute.append((name, doc))
+
+        if not to_compute:
+            logger.info(f"Tool embeddings fully served from disk cache ({len(self._tool_embedding_cache)} tools, 0 API calls).")
+            return
+
+        logger.info(f"Embedding {len(to_compute)} tool(s) not found in cache (out of {len(docs_by_tool)} total)...")
+
+        def _embed_one(item: tuple) -> tuple:
+            name, doc = item
+            try:
+                vec = rag_vault.generate_embedding(doc)
+                return name, doc, vec
+            except Exception as ex:
+                logger.debug(f"Could not compute embedding for tool {name}: {ex}")
+                return name, doc, None
+
+        with ThreadPoolExecutor(max_workers=min(10, len(to_compute))) as pool:
+            results = list(pool.map(_embed_one, to_compute))
+
+        updated_persisted = dict(persisted)
+        for name, doc, vec in results:
+            if vec:
+                self._tool_embedding_cache[name] = vec
+                updated_persisted[name] = {"hash": self._doc_hash(doc), "vector": vec}
+
+        # Drop stale entries for tools that no longer exist in the registry
+        updated_persisted = {k: v for k, v in updated_persisted.items() if k in docs_by_tool}
+        self._save_persisted_tool_embeddings(updated_persisted)
+
+    # -------------------------------------------------------------------------
 
     def _register_core_tools(self) -> None:
-        """Registers all built-in filesystem and search tools."""
+        """Registers all built-in filesystem and search tools with strict dual-boundary descriptions."""
 
         # 1. read_file
         def read_file_handler(path: str) -> str:
@@ -92,7 +194,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="read_file",
-                description="Read contents of a file inside the workspace.",
+                description="Read raw file contents from the workspace. Use when inspecting an entire source file or configuration. Do NOT use if the file contents have already been returned in recent conversation turns, or for casual chat where no file is referenced.",
                 function=read_file_handler,
                 args_schema=ReadFileInput,
                 risk_level=RiskLevel.SAFE,
@@ -108,7 +210,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="write_file",
-                description="Write, update, or overwrite a file in the workspace.",
+                description="Create a new file or completely overwrite an existing file in the workspace with verified code or documentation. Do NOT use for inspecting, reading, or viewing file contents (use read_file or view_file instead), and do NOT use for temporary chat replies.",
                 function=write_file_handler,
                 args_schema=WriteFileInput,
                 risk_level=RiskLevel.MODERATE,
@@ -124,7 +226,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="run_command",
-                description="Execute a shell command in the local environment.",
+                description="Execute a shell command or CLI operation in the workspace (e.g. running tests, building assets, installing packages with uv or npm, git commands). CRITICAL: Do NOT use with 'echo' or shell commands to output conversational answers, greetings, opinions, or text explanations. Do NOT use for read-only inspections when dedicated tools (read_file, list_dir, grep_search) are available.",
                 function=run_command_handler,
                 args_schema=RunCommandInput,
                 risk_level=RiskLevel.HIGH,
@@ -140,7 +242,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="list_dir",
-                description="List directory entries, subfolders, and file sizes.",
+                description="List files and directory structures inside a workspace folder. Use when exploring unfamiliar project layout. Do NOT use if the directory layout is already known or for general conversation.",
                 function=list_dir_handler,
                 args_schema=ListDirectoryInput,
                 risk_level=RiskLevel.SAFE,
@@ -156,7 +258,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="search_web",
-                description="Search the live web for verified documentation and factual sources.",
+                description="Search the live web for real-time external data, current news, recent documentation, or when you lack sufficient knowledge or confidence to answer accurately about an unfamiliar topic, term, or entity. Do NOT use when you can already answer accurately and confidently from existing training knowledge, or for standard creative writing and casual banter.",
                 function=search_web_handler,
                 args_schema=SearchWebInput,
                 risk_level=RiskLevel.SAFE,
@@ -172,7 +274,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="scrape_web",
-                description="Fetch and extract readable Markdown content from a given web URL.",
+                description="Fetch and extract readable Markdown content from a given web URL. Use when you need to read documentation or inspect content from a specific link. Do NOT use when no specific URL is provided.",
                 function=scrape_web_handler,
                 args_schema=ScrapeWebpageInput,
                 risk_level=RiskLevel.SAFE,
@@ -188,7 +290,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="grep_search",
-                description="Search for occurrences of a string or pattern across project files.",
+                description="Search for exact text strings, symbol names, or regex patterns across files in the workspace. Use to locate function definitions, error strings, or imports. Do NOT use as an internet search or when the file path is already known.",
                 function=grep_search_handler,
                 args_schema=GrepSearchInput,
                 risk_level=RiskLevel.SAFE,
@@ -204,7 +306,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="view_file",
-                description="View specific line slices or entire content of a file with line numbers.",
+                description="View specific line slices or full content of a file with line numbers. Use to pinpoint code sections before editing or during code review. Do NOT use if the lines have already been displayed in the current turn.",
                 function=view_file_handler,
                 args_schema=ViewFileInput,
                 risk_level=RiskLevel.SAFE,
@@ -226,7 +328,7 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="search_knowledge_vault",
-                description="Search local knowledge vault for project documentation, user habits, specifications, and dynamic tools.",
+                description="Query the local vector knowledge database (pgvector/SQLite) for saved user notes, project specifications, past architectural decisions, or learned user habits. Use when questions explicitly reference 'my notes', past decisions, or user preferences. Do NOT use for general world knowledge, public facts, standard coding advice, or casual conversation that does not involve the user's private notes.",
                 function=search_knowledge_vault_handler,
                 args_schema=SearchKnowledgeVaultInput,
                 risk_level=RiskLevel.SAFE,
@@ -245,11 +347,45 @@ class ToolRegistry:
         self.register(
             ToolDefinition(
                 name="create_custom_tool",
-                description="Synthesize, verify, and register a new reusable Python tool in the workspace tools/ folder. Checks syntax, writes SHA256 integrity hash, and activates it immediately for ERIS.",
+                description="Synthesize, verify, and register a new reusable Python tool inside tools/. Use strictly when the user asks to build or add a new tool. Do NOT use for standard application coding, editing project files, or answering questions.",
                 function=create_custom_tool_handler,
                 args_schema=CreateToolInput,
                 risk_level=RiskLevel.HIGH,
                 requires_approval=True,
+                source="core",
+            )
+        )
+
+        # 11. render_ui (Dynamic visual presentation)
+        def render_ui_handler(component: str = "", props: Optional[Dict[str, Any]] = None, **kwargs) -> str:
+            actual_comp = component or kwargs.get("component") or "unknown"
+            return f"UI block rendered: {actual_comp}"
+
+        self.register(
+            ToolDefinition(
+                name="render_ui",
+                description="Call this whenever showing a visual (a code comparison diff, a terminal session, a file tree, safari browser, media player, mobile device preview, subagent chain) would help the user more than describing it in text. Do not guess this from keywords - call it only when you are about to actually show that visual as part of your answer.",
+                function=render_ui_handler,
+                args_schema=RenderUIInput,
+                risk_level=RiskLevel.SAFE,
+                requires_approval=False,
+                source="core",
+            )
+        )
+
+        # 12. ask_question (Structured elicitation preference question)
+        def ask_question_handler(prompt: str = "", mode: str = "single", options: Optional[List[Dict[str, str]]] = None, allowCustom: bool = False, **kwargs) -> str:
+            opts = options or kwargs.get("options") or []
+            return f"Structured elicitation question presented [{mode}]: {prompt} with {len(opts)} options."
+
+        self.register(
+            ToolDefinition(
+                name="ask_question",
+                description="Invoke mid-conversation to ask the user a structured clarifying question or preference instead of writing it as chat prose. Provides selectable single or multi-choice options and optional custom text input.",
+                function=ask_question_handler,
+                args_schema=AskQuestionInput,
+                risk_level=RiskLevel.SAFE,
+                requires_approval=False,
                 source="core",
             )
         )
@@ -386,26 +522,94 @@ class ToolRegistry:
                             file_path=str(tool_file),
                         )
                     )
+                elif tool_name == "render_ui":
+                    def render_ui_dyn_wrapper(component: str = "", props: Optional[Dict[str, Any]] = None, _fn=execute_fn, **kwargs) -> str:
+                        actual_comp = component or kwargs.get("component") or "unknown"
+                        actual_props = props if isinstance(props, dict) else kwargs.get("props") or {}
+                        return _fn(actual_comp, actual_props)
+
+                    self.register(
+                        ToolDefinition(
+                            name="render_ui",
+                            description=description,
+                            function=render_ui_dyn_wrapper,
+                            args_schema=RenderUIInput,
+                            risk_level=RiskLevel.SAFE,
+                            requires_approval=False,
+                            source="dynamic",
+                            file_path=str(tool_file),
+                        )
+                    )
                 else:
-                    # Dynamic generic tool wrapper
-                    generic_schema = create_model(
-                        f"{tool_name.capitalize()}Input",
-                        args=(str, ...),
-                        __base__=BaseModel,
+                    # Dynamic tool wrapper with automatic schema introspection
+                    # 1. Check if tool defines explicit Pydantic model (ToolInput, ArgsSchema, ARGS_SCHEMA)
+                    custom_schema = getattr(module, "ToolInput", getattr(module, "ArgsSchema", getattr(module, "ARGS_SCHEMA", None)))
+                    if custom_schema and isinstance(custom_schema, type) and issubclass(custom_schema, BaseModel):
+                        tool_schema = custom_schema
+                    else:
+                        # 2. Introspect execute_fn signature
+                        try:
+                            sig = inspect.signature(execute_fn)
+                            fields = {}
+                            for p_name, p in sig.parameters.items():
+                                if p_name in ("kwargs", "args") and p.kind in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL):
+                                    continue
+                                p_type = p.annotation if p.annotation != inspect.Parameter.empty else Any
+                                p_default = p.default if p.default != inspect.Parameter.empty else ...
+                                fields[p_name] = (p_type, p_default)
+
+                            if fields:
+                                tool_schema = create_model(f"{tool_name.capitalize()}Input", **fields, __base__=BaseModel)
+                                tool_schema.model_config = {"extra": "allow"}
+                            else:
+                                tool_schema = create_model(f"{tool_name.capitalize()}Input", args=(Optional[str], ""), __base__=BaseModel)
+                                tool_schema.model_config = {"extra": "allow"}
+                        except Exception:
+                            tool_schema = create_model(f"{tool_name.capitalize()}Input", args=(Optional[str], ""), __base__=BaseModel)
+                            tool_schema.model_config = {"extra": "allow"}
+
+                    # Read RiskLevel and requires_approval from module if defined
+                    raw_risk = getattr(module, "RISK_LEVEL", getattr(module, "risk_level", RiskLevel.SAFE))
+                    if isinstance(raw_risk, str):
+                        try:
+                            tool_risk = RiskLevel(raw_risk.lower())
+                        except ValueError:
+                            tool_risk = RiskLevel.SAFE
+                    elif isinstance(raw_risk, RiskLevel):
+                        tool_risk = raw_risk
+                    else:
+                        tool_risk = RiskLevel.SAFE
+
+                    req_approval = getattr(
+                        module,
+                        "REQUIRES_APPROVAL",
+                        getattr(module, "requires_approval", tool_risk in (RiskLevel.HIGH, RiskLevel.CRITICAL)),
                     )
 
-                    def generic_wrapper(args: str = "", _fn=execute_fn, **kwargs) -> str:
-                        actual_args = args or str(kwargs)
-                        return _fn(actual_args)
+                    def dynamic_wrapper(_fn=execute_fn, **kwargs) -> str:
+                        try:
+                            sig = inspect.signature(_fn)
+                            if len(sig.parameters) == 1 and "args" in sig.parameters and not kwargs.get("args") and kwargs:
+                                return _fn(json.dumps(kwargs))
+                            has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                            if has_varkw:
+                                return _fn(**kwargs)
+                            valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+                            return _fn(**valid_kwargs)
+                        except Exception as ex:
+                            try:
+                                return _fn(str(kwargs.get("args", kwargs)))
+                            except Exception:
+                                return f"Error executing tool: {ex}"
 
                     self.register(
                         ToolDefinition(
                             name=tool_name,
                             description=description,
-                            function=generic_wrapper,
-                            args_schema=generic_schema,
-                            risk_level=RiskLevel.MODERATE,
-                            requires_approval=False,
+                            function=dynamic_wrapper,
+                            args_schema=tool_schema,
+                            risk_level=tool_risk,
+                            requires_approval=bool(req_approval),
                             source="dynamic",
                             file_path=str(tool_file),
                         )
@@ -421,7 +625,15 @@ class ToolRegistry:
     def get_tool_by_name(self, name: str) -> Optional[ToolDefinition]:
         """Retrieves a single ToolDefinition by name."""
         self.initialize()
-        return self._tools.get(name)
+        tool_def = self._tools.get(name)
+        if not tool_def:
+            # Auto-discovery for tools synthesized at runtime
+            tool_file = settings.WORKSPACE_PATH / "tools" / f"{name}.py"
+            if tool_file.exists():
+                logger.info(f"Dynamically discovered new tool on disk '{name}'. Refreshing registry...")
+                self.initialize(force_refresh=True)
+                tool_def = self._tools.get(name)
+        return tool_def
 
     def get_all_tools(self) -> Dict[str, ToolDefinition]:
         """Returns all registered tools."""
@@ -498,34 +710,72 @@ class ToolRegistry:
         except Exception as ex:
             return f"Error executing tool '{name}': {ex}"
 
-    def get_relevant_tools(self, query: str = "", top_k: int = 8) -> List[StructuredTool]:
+    def _find_elbow(self, scores: List[float], max_k: int = 8) -> int:
         """
-        Fast in-memory tool selection:
-        Always preserves baseline inspection tools (read_file, view_file, grep_search, list_dir),
-        and ranks remaining workspace tools via in-memory lexical keyword overlap (0.1 ms, 0 API calls).
+        Dynamic score-gap / elbow candidate selection:
+        1. If top score < min_plausible_relevance (0.58), query is non-tool conversation -> 0 tools.
+        2. If top score < 0.60 and top-3 distribution is flat (< 0.03 spread) -> 0 tools.
+        3. For actionable queries, select the tightly clustered top-tier tools within (top_score - 0.028),
+           or cut at the largest drop in the top tier, capped at max_k.
         """
+        if not scores or scores[0] < self._min_plausible_relevance:
+            return 0
+        if scores[0] < 0.60 and len(scores) >= 3 and (scores[0] - scores[2]) < 0.03:
+            return 0
+
+        tier_cutoff = scores[0] - 0.018
+        cluster_count = sum(1 for s in scores if s >= tier_cutoff)
+        drops = [(scores[i] - scores[i + 1]) for i in range(min(len(scores) - 1, 4))]
+        for i, drop in enumerate(drops):
+            if drop >= 0.015:
+                return min(i + 1, max(1, cluster_count), max_k)
+
+        return min(max(1, cluster_count), max_k)
+
+    def get_relevant_tools(self, query: str = "", max_k: int = 8, top_k: Optional[int] = None) -> List[StructuredTool]:
+        """
+        Dynamic score-gap / elbow-derived semantic tool selection.
+        Calculates cosine similarity of query against precomputed tool embeddings.
+        Returns a variable-size candidate set if clear intent is detected; returns [] for flat/noisy chat.
+        """
+        limit = top_k if top_k is not None else max_k
         self.initialize()
-        all_lc_tools = self.get_langchain_tools()
-        if len(all_lc_tools) <= top_k or not query or not query.strip():
-            return all_lc_tools
+        if not query or not query.strip():
+            return []
 
-        always_included = {"read_file", "view_file", "grep_search", "list_dir"}
-        q_tokens = set(re.findall(r"\b[a-zA-Z0-9_\-]{2,}\b", query.lower()))
+        clean_query = query.strip()
+        query_vec = rag_vault.generate_embedding(clean_query)
+        all_lc = {t.name: t for t in self.get_langchain_tools()}
 
-        scored_tools = []
-        for t in all_lc_tools:
-            if t.name in always_included:
-                continue
-            desc_tokens = set(re.findall(r"\b[a-zA-Z0-9_\-]{2,}\b", (t.name + " " + (t.description or "")).lower()))
-            overlap = len(q_tokens.intersection(desc_tokens))
-            scored_tools.append((overlap, t))
+        if not query_vec or not self._tool_embedding_cache:
+            # Fallback if embeddings are unavailable: return empty on short chat greetings, or minimal tools
+            if len(clean_query.split()) <= 3 and any(w in clean_query.lower() for w in ("hi", "hello", "hey", "thanks")):
+                return []
+            return list(all_lc.values())[:limit]
 
-        scored_tools.sort(key=lambda x: x[0], reverse=True)
-        remaining_slots = max(0, top_k - len(always_included))
-        top_extra = [t for _, t in scored_tools[:remaining_slots]]
+        import math
+        def cosine_sim(a: List[float], b: List[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = math.sqrt(sum(x * x for x in a))
+            norm_b = math.sqrt(sum(y * y for y in b))
+            if not norm_a or not norm_b:
+                return 0.0
+            return dot / (norm_a * norm_b)
 
-        included_names = always_included.union(t.name for t in top_extra)
-        return [t for t in all_lc_tools if t.name in included_names]
+        scored = []
+        for name, tool_vec in self._tool_embedding_cache.items():
+            sim = cosine_sim(query_vec, tool_vec)
+            scored.append((sim, name))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        scores = [s for s, _ in scored]
+
+        cut = self._find_elbow(scores[:limit], max_k=limit)
+        if cut <= 0:
+            return []
+
+        relevant_names = set(name for _, name in scored[:cut])
+        return [all_lc[name] for name in relevant_names if name in all_lc]
 
 
 # Global tool registry instance
@@ -542,9 +792,9 @@ def get_langchain_tools() -> List[StructuredTool]:
     return registry.get_langchain_tools()
 
 
-def get_relevant_tools(query: str = "", top_k: int = 8) -> List[StructuredTool]:
+def get_relevant_tools(query: str = "", max_k: int = 8, top_k: Optional[int] = None) -> List[StructuredTool]:
     """Helper function for Dynamic Tool Selection RAG."""
-    return registry.get_relevant_tools(query=query, top_k=top_k)
+    return registry.get_relevant_tools(query=query, max_k=max_k, top_k=top_k)
 
 
 def get_tool_by_name(name: str) -> Optional[ToolDefinition]:
@@ -560,4 +810,3 @@ def check_if_approval_needed(tool_name: str, args: Dict[str, Any], user_habits: 
 def execute_tool(name: str, args: Dict[str, Any]) -> str:
     """Helper function to execute a tool."""
     return registry.execute_tool(name, args)
-

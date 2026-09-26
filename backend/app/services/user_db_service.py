@@ -68,7 +68,7 @@ class UserDatabaseService:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS workspace_config (
                 key TEXT PRIMARY KEY,
-                active_model TEXT DEFAULT 'gemini/gemini-2.5-flash',
+                active_model TEXT DEFAULT 'gemini/gemini-3-flash-preview',
                 execution_mode TEXT DEFAULT 'speed',
                 ui_preferences TEXT,
                 updated_at TEXT
