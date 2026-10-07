@@ -683,6 +683,17 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     }
   }, [showRightSidebar, rightSidebarTab]);
 
+  const handleTogglePlugins = useCallback(() => {
+  if (showRightSidebar && rightSidebarTab === 'plugins') {
+  setShowRightSidebar(false);
+  } else {
+  setShowRightSidebar(true);
+  setRightSidebarTab('plugins');
+  }
+  }, [showRightSidebar, rightSidebarTab]);
+
+  const isEmptyConversation = messages.length === 0 && !isStreaming;
+
   const handleToggleTools = useCallback(() => {
     if (showRightSidebar && rightSidebarTab === 'tools') {
       setShowRightSidebar(false);
@@ -1721,6 +1732,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           showRightSidebar={showRightSidebar}
           rightSidebarTab={rightSidebarTab}
           onToggleConnectors={handleToggleConnectors}
+          onTogglePlugins={handleTogglePlugins}
           onToggleTools={handleToggleTools}
           onOpenModelMatrix={() => setIsModelConfigOpen(true)}
           onOpenWorkflowPage={() => navigate('workflow')}
@@ -1769,18 +1781,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             'flex-1 flex flex-col min-w-0 relative h-full bg-transparent'
           )}
         >
-          {/* Continuous Canvas Dot Pattern */}
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              backgroundImage: isDarkMode
-                ? 'radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)'
-                : 'radial-gradient(circle, #cbd5e1 1px, transparent 1px)',
-              backgroundSize: '22px 22px',
-              opacity: isDarkMode ? 0.35 : 0.5,
-            }}
-          />
-
           <ChatCanvas
             messages={messages}
             isStreaming={isStreaming}
@@ -1798,19 +1798,34 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             activeModel={activeModel}
             chatZoom={chatZoom}
             onZoomChange={setChatZoom}
+            composer={
+              isEmptyConversation ? (
+                <ChatInputBar
+                  variant="hero"
+                  isDarkMode={isDarkMode}
+                  isStreaming={isStreaming}
+                  onSendMessage={handleSendMessage}
+                  onStopStreaming={handleStopStreaming}
+                  onOpenBrowser={handleOpenBrowser}
+                  conversationMessages={messages}
+                />
+              ) : null
+            }
           />
-          <ChatInputBar
-            isDarkMode={isDarkMode}
-            isStreaming={isStreaming}
-            onSendMessage={handleSendMessage}
-            onStopStreaming={handleStopStreaming}
-            onOpenBrowser={handleOpenBrowser}
-            conversationMessages={messages}
-            chatZoom={chatZoom}
-            onZoomIn={handleZoomIn}
-            onZoomOut={handleZoomOut}
-            onZoomReset={handleZoomReset}
-          />
+          {!isEmptyConversation && (
+            <ChatInputBar
+              isDarkMode={isDarkMode}
+              isStreaming={isStreaming}
+              onSendMessage={handleSendMessage}
+              onStopStreaming={handleStopStreaming}
+              onOpenBrowser={handleOpenBrowser}
+              conversationMessages={messages}
+              chatZoom={chatZoom}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onZoomReset={handleZoomReset}
+            />
+          )}
         </div>
 
         {showRightSidebar ? (

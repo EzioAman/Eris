@@ -80,6 +80,7 @@ export interface ChatInputBarProps {
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onZoomReset?: () => void;
+  variant?: 'docked' | 'hero';
 }
 
 interface SlashCommand {
@@ -111,7 +112,9 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
   onZoomIn,
   onZoomOut,
   onZoomReset,
+  variant = 'docked',
 }) => {
+  const isHero = variant === 'hero';
   const [inputValue, setInputValue] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
@@ -241,7 +244,7 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
   }, [conversationMessages, inputValue, activeModelInfo, liveTokenUsage]);
 
   return (
-    <div className="shrink-0 p-3 sm:p-4 md:p-6 z-20 relative font-sans">
+    <div className={cn('relative z-20 font-sans', isHero ? 'w-full' : 'shrink-0 p-3 sm:p-4 md:p-6')}>
       <div className="max-w-2xl mx-auto w-full relative">
         {/* Floating Context Window Usage Telemetry (Floats above entire input box without obscuring textarea) */}
         {showTokenPopover && (
@@ -291,7 +294,8 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
           <div
             ref={slashMenuRef}
             className={cn(
-              'absolute bottom-full left-0 mb-2 w-full max-w-md rounded-2xl border p-1.5 shadow-2xl z-50 font-sans animate-in fade-in zoom-in-95 duration-150',
+              'absolute left-0 w-full max-w-md rounded-2xl border p-1.5 shadow-2xl z-50 font-sans animate-in fade-in zoom-in-95 duration-150',
+              isHero ? 'top-full mt-2' : 'bottom-full mb-2',
               isDarkMode ? 'bg-[#121622] border-white/10 text-neutral-200' : 'bg-white border-slate-200 text-slate-800'
             )}
           >
@@ -464,17 +468,20 @@ export const ChatInputBar: React.FC<ChatInputBarProps> = ({
               }
 
               if (e.key === 'Enter' && !e.shiftKey) {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                 e.preventDefault();
                 handleSend();
               }
             }}
+            aria-label="Message Eris"
             placeholder={
               webSearchEnabled
                 ? 'Search the web, browse websites, or enter a URL...'
-                : 'Hey there, what can I do for you? (Type / for commands)'
+                : 'Send a message… Type / for commands'
             }
             className={cn(
               'block max-h-40 w-full resize-none bg-transparent px-4 pt-3.5 text-sm leading-relaxed outline-none font-sans',
+              isHero && 'min-h-[3.25rem] pt-4 text-[15px]',
               isDarkMode ? 'text-neutral-100 placeholder-neutral-500' : 'text-slate-800 placeholder-slate-400'
             )}
           />

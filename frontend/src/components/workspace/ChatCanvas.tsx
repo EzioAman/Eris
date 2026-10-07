@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowDown, Terminal as TerminalIcon, Lightbulb, Workflow, Globe, Settings2 } from 'lucide-react';
+import { ArrowDown, Lightbulb, PenLine, FileText, Sparkles } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { formatModelName } from '../../lib/modelUtils';
 import type { ChatMessage, ScheduledTaskItem, ActiveThinkingState } from './chatTypes';
@@ -31,14 +31,15 @@ export interface ChatCanvasProps {
   activeModel?: string;
   chatZoom?: number;
   onZoomChange?: (newZoom: number) => void;
+  composer?: React.ReactNode;
 }
 
-const getTimeGreeting = () => {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-};
+const STARTER_PROMPTS = [
+  { label: 'Explain a concept', icon: Lightbulb, prompt: 'Explain this concept in simple terms: ' },
+  { label: 'Draft a message', icon: PenLine, prompt: 'Help me draft a message about ' },
+  { label: 'Summarize this', icon: FileText, prompt: 'Summarize the following:\n' },
+  { label: 'Brainstorm ideas', icon: Sparkles, prompt: 'Brainstorm ideas for ' },
+];
 
 export const ChatCanvas: React.FC<ChatCanvasProps> = ({
   messages,
@@ -51,12 +52,11 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
   onSendMessage,
   onDecision,
   onOpenFlow,
-  onOpenWorkflowBuilder,
-  onOpenModelConfig,
   scrollRef,
   activeModel,
   chatZoom = 100,
   onZoomChange,
+  composer,
 }) => {
   const {
     containerRef: scrollContainerRef,
@@ -130,98 +130,45 @@ export const ChatCanvas: React.FC<ChatCanvasProps> = ({
         className="smooth-scroll relative flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 md:p-8 flex flex-col [overflow-anchor:none]"
       >
         {messages.length === 0 && !isStreaming ? (
-          <div className="my-auto flex flex-col justify-center items-center flex-1">
-            <div className="max-w-2xl mx-auto w-full space-y-5">
-              {/* Greeting Header */}
-              <div className="text-center mb-6">
-                <h2 className={cn('text-2xl font-semibold', isDarkMode ? 'text-white' : 'text-slate-800')}>
-                  {getTimeGreeting()}, {userProfile?.displayName || userProfile?.username || 'there'}
-                </h2>
-                <p className={cn('text-sm mt-1', isDarkMode ? 'text-neutral-400' : 'text-slate-500')}>
-                  What would you like to work on?
-                </p>
-              </div>
-
-              {/* Quick Action Starter Pills */}
-              <span
+          <section
+            aria-labelledby="empty-state-heading"
+            className="my-auto flex w-full flex-1 flex-col justify-center py-8"
+          >
+            <div className="mx-auto w-full max-w-2xl">
+              <h1
+                id="empty-state-heading"
                 className={cn(
-                  'text-[13px] font-medium block',
-                  isDarkMode ? 'text-neutral-400' : 'text-slate-500'
+                  'mb-6 text-balance px-1 text-2xl font-semibold tracking-tight sm:text-3xl',
+                  isDarkMode ? 'text-white' : 'text-slate-900'
                 )}
               >
-                Quick Actions & System Tools
-              </span>
-              <div className="flex flex-wrap gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => onOpenWorkflowBuilder?.()}
-                  className={cn(
-                    'cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] transition-all shadow-xs font-semibold',
-                    isDarkMode
-                      ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 hover:text-indigo-200'
-                      : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800'
-                  )}
-                >
-                  <Workflow className="w-4 h-4 text-indigo-400" />
-                  Workflow Studio
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSendMessage('/tools')}
-                  className={cn(
-                    'cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] transition-all shadow-xs font-medium',
-                    isDarkMode
-                      ? 'border-white/10 bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/20 text-neutral-300 hover:text-white'
-                      : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-600 hover:text-slate-800'
-                  )}
-                >
-                  <TerminalIcon className="w-4 h-4 text-neutral-400" />
-                  View Registered Tools
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSendMessage('/health')}
-                  className={cn(
-                    'cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] transition-all shadow-xs font-medium',
-                    isDarkMode
-                      ? 'border-white/10 bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/20 text-neutral-300 hover:text-white'
-                      : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-600 hover:text-slate-800'
-                  )}
-                >
-                  <Lightbulb className="w-4 h-4 text-emerald-400" />
-                  Security & Health Audit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSendMessage('/browser https://duckduckgo.com')}
-                  className={cn(
-                    'cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] transition-all shadow-xs font-sans font-medium',
-                    isDarkMode
-                      ? 'border-white/10 bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/20 text-neutral-300 hover:text-white'
-                      : 'border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-slate-700 hover:text-slate-900'
-                  )}
-                >
-                  <Globe className="w-4 h-4 text-cyan-500" />
-                  Web Browser
-                </button>
-                {onOpenModelConfig && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenModelConfig()}
-                    className={cn(
-                      'cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] transition-all shadow-xs font-medium',
-                      isDarkMode
-                        ? 'border-white/10 bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/20 text-neutral-300 hover:text-white'
-                        : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-600 hover:text-slate-800'
-                    )}
-                  >
-                    <Settings2 className="w-4 h-4 text-neutral-400" />
-                    Model Settings
-                  </button>
-                )}
-              </div>
+                How can I help you today
+                {userProfile?.displayName ? `, ${userProfile.displayName.split(' ')[0]}` : ''}?
+              </h1>
+
+              {composer}
+
+              <ul aria-label="Suggested prompts" className="mt-4 flex flex-wrap gap-2 px-1">
+                {STARTER_PROMPTS.map(({ label, icon: Icon, prompt }) => (
+                  <li key={label}>
+                    <button
+                      type="button"
+                      onClick={() => window.dispatchEvent(new CustomEvent('eris:paste', { detail: prompt }))}
+                      className={cn(
+                        'inline-flex h-9 cursor-pointer items-center gap-2 rounded-full border px-3.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]',
+                        isDarkMode
+                          ? 'border-white/10 text-neutral-300 hover:border-white/20 hover:bg-white/[0.05] hover:text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
+                      )}
+                    >
+                      <Icon aria-hidden="true" className={cn('size-3.5', isDarkMode ? 'text-neutral-500' : 'text-slate-400')} />
+                      {label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </div>
+          </section>
         ) : (
           <div
             className="max-w-3xl mx-auto w-full flex flex-col gap-6 origin-top transition-transform"
