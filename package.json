@@ -1,0 +1,9 @@
+{
+  "name": "eris-workspace",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm --prefix frontend install",
+    "dev": "npm --prefix frontend run dev -- --host 0.0.0.0",
+    "build": "npm --prefix frontend run build"
+  }
+}
