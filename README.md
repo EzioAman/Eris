@@ -227,7 +227,7 @@ Reasoning models (for example Gemini thinking models and DeepSeek-R1) return str
 
 ## Benchmarks
 
-*Environment: Windows 11 x64, Intel Core i7, 16 GB RAM, NVMe SSD.*
+*Environment: Windows 11 x64, Ryzen 7 4800H, 16 GB RAM, NVMe SSD.*
 
 ### Startup and footprint (v0.1.0-beta -> v0.1.1-beta)
 
