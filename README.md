@@ -1,41 +1,42 @@
 # ERIS — Autonomous Desktop AI Workspace
 
-[![Release](https://img.shields.io/badge/Release-v0.1.0--beta-blue.svg)](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta)
-[![Download for Windows](https://img.shields.io/badge/Download-ERIS%20Setup%20(Windows)-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
-[![React](https://img.shields.io/badge/Frontend-React%2019%20%7C%20Vite%208-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
+[![Release](https://img.shields.io/badge/Release-v0.1.1--beta-blue.svg)](https://github.com/EzioAman/Eris/releases/tag/v0.1.1-beta)
+[![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-TODO_confirm_version-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://microsoft.com/windows)
-[![Architecture](https://img.shields.io/badge/Architecture-Local--First%20%7C%20LangGraph-orange.svg)](#architecture)
 
-**ERIS** is a local-first, autonomous AI desktop workspace designed for Windows. It combines multi-provider model orchestration, real-time reasoning loops, human-in-the-loop security approval, and a filesystem-based plugin engine into a unified desktop interface.
+**ERIS** is a local-first desktop AI workspace where agents don't just answer, they act. A LangGraph engine runs a reasoning loop, calls tools, and pauses for your approval before anything sensitive (terminal commands, script execution, file changes) runs on your machine.
 
-Whether you are connected to Google Gemini, OpenRouter, Groq, or running a 100% offline model via Ollama, ERIS runs locally on your computer, keeps your session history isolated per user account, and gives you complete oversight of every terminal command and tool action.
+<!-- TODO: add a 20-30 second demo GIF here: give ERIS a task, show the agents working, show the approval card. -->
+
+---
+
+## At a glance
+
+| | |
+|---|---|
+| **Agent engine** | LangGraph, cyclic workflow graph with tool dispatch and observation loop |
+| **Safety** | Human-in-the-loop approval gate for shell, scripts and file changes |
+| **Models** | Gemini, OpenRouter, Groq, OpenAI, Anthropic, DeepSeek, or fully offline with Ollama |
+| **Streaming** | Real-time reasoning and tool events over Server-Sent Events (SSE) |
+| **Extensibility** | Drop a Python file into `tools/` and it is live, no restart |
+| **Distribution** | Windows installer with SHA-256 verified self-updater |
 
 ---
 
 ## Table of Contents
 
 - [Key Capabilities](#key-capabilities)
+- [Multi-Agent Orchestration](#multi-agent-orchestration)
+- [Retrieval and Memory](#retrieval-and-memory)
+- [Observability and Testing](#observability-and-testing)
 - [Visual Showcase](#visual-showcase)
-- [Download & Installation](#download--installation)
-  - [Windows Setup Installer (.exe)](#windows-setup-installer-exe)
-  - [Verification & Integrity](#verification--integrity)
-- [Quick Start Guide](#quick-start-guide)
-  - [1. Connect Your API Keys](#1-connect-your-api-keys)
-  - [2. Select an Active Model](#2-select-an-active-model)
-  - [3. Multi-User Account Support](#3-multi-user-account-support)
-- [Tool & Plugin Architecture](#tool--plugin-architecture)
-  - [How ERIS Discovers Tools](#how-eris-discovers-tools)
-  - [Creating a Custom Tool Plugin](#creating-a-custom-tool-plugin)
-  - [Interactive Tool Synthesis](#interactive-tool-synthesis)
-- [Architecture & Security](#architecture--security)
-  - [Human-in-the-Loop Approval Gate](#human-in-the-loop-approval-gate)
-  - [Thought Signature Preservation](#thought-signature-preservation)
+- [Download and Installation](#download-and-installation)
+- [Quick Start](#quick-start)
+- [Tool and Plugin Architecture](#tool-and-plugin-architecture)
+- [Architecture and Security](#architecture-and-security)
+- [Benchmarks](#benchmarks)
 - [Building from Source](#building-from-source)
-  - [Prerequisites](#prerequisites)
-  - [Backend Setup](#backend-setup)
-  - [Frontend Setup](#frontend-setup)
 - [Project Layout](#project-layout)
 - [Contributing](#contributing)
 - [License](#license)
@@ -44,328 +45,270 @@ Whether you are connected to Google Gemini, OpenRouter, Groq, or running a 100% 
 
 ## Key Capabilities
 
-- **Multi-Provider Model Routing**: Plug in credentials for Google Gemini (including Gemini 3.8 Flash and 2.5 Pro), OpenRouter, Groq, OpenAI, Anthropic, DeepSeek, or run fully offline with local Ollama instances.
-- **Dynamic Plugin Engine**: Extend ERIS instantly by dropping standard Python files into `tools/`. ERIS indexes, validates, and activates them on the fly without restarting.
-- **Interactive Tool Synthesis**: When a task requires custom capabilities, ERIS can write, test, and register a new tool plugin directly with your approval.
-- **Human-in-the-Loop Security**: Potentially sensitive operations (terminal commands, script execution, file changes) pause and display an interactive approval card in chat. You decide what runs on your system.
-- **Multi-User Isolation**: Seamless multi-account support. Signing in with different Google accounts or guest profiles maintains isolated conversation histories, memories, and session stores.
-- **Real-Time Reasoning Stream**: Observe the model's inner thoughts, action dispatches, tool arguments, and execution outputs as Server-Sent Events (SSE) in real time.
-- **Thought Signature Preservation**: Built-in support for advanced thinking models that preserve structured reasoning blocks across multi-turn tool loops without API errors.
-- **Local SQLite Vault**: API keys and workspace preferences are stored locally in an encrypted database on your machine.
+- **Multi-provider model routing** with live connectivity checks and failover between providers.
+- **Multi-agent orchestration** with specialised sub-agents (see below).
+- **Human-in-the-loop security:** risky actions pause on an interactive approval card.
+- **Dynamic plugin engine:** tools in `tools/` are indexed, validated and hashed (SHA-256) automatically.
+- **Interactive tool synthesis:** ERIS can write, test and register a new tool, with your approval.
+- **Multi-user isolation:** conversations, memories and sessions are scoped per account.
+- **Real-time reasoning stream:** thoughts, tool arguments and outputs arrive as SSE events.
+- **Local encrypted vault** for API keys and preferences.
+- **Self-updater:** checks, downloads and applies updates, verified against a SHA-256 manifest.
+
+---
+
+## Multi-Agent Orchestration
+
+<!-- TODO: fill this in from your code (likely backend/app/agent/subagent_personas.py and langgraph_engine.py).
+     Only describe what the code really does. Delete this section if it does not exist. -->
+
+ERIS splits work across specialised agents coordinated by a LangGraph workflow:
+
+| Agent | Role | Tools it can use |
+|---|---|---|
+| Researcher | TODO (e.g. web search, gathering sources) | TODO |
+| Coder | TODO (e.g. writes and edits code) | TODO |
+| Writer | TODO (e.g. drafts and summarises results) | TODO |
+
+**How they coordinate:** TODO. State one of: shared graph state, a supervisor/router node, or message passing between agents.
+
+**How safety applies:** TODO. Explain how the approval gate applies when a sub-agent requests a sensitive tool.
+
+<!-- TODO: add a Mermaid or PNG diagram of the graph (supervisor -> agents -> tool runner -> approval gate). -->
+
+---
+
+## Retrieval and Memory
+
+<!-- TODO: confirm each item exists in the code before keeping it. -->
+
+- **Hybrid retrieval:** keyword (BM25) plus vector search (pgvector) over the knowledge vault. TODO: confirm where BM25 runs.
+- **Semantic caching:** repeated or near-duplicate queries are served from cache. TODO: describe the similarity threshold.
+- **Embeddings:** TODO (fastembed locally? Gemini embeddings?).
+- **Per-user memory:** stored under `memory/users/<user_id>/`.
+- **Agent state checkpointing:** TODO (what is persisted, where, and how a run resumes).
+
+Retrieval performance is documented in [Benchmarks](#benchmarks).
+
+---
+
+## Observability and Testing
+
+- **Tracing with LangSmith:** every agent run, tool call and retrieval step is traced, so you can inspect the full reasoning path, latency per step and token usage. Enable it with `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in your `.env`. <!-- TODO: confirm the exact env var names/setup you used. -->
+- **Measured from traces:** the retrieval latency numbers in [Benchmarks](#benchmarks) come from LangSmith traces, not estimates.
+- **Evaluation:** latency, token usage and hallucination rate are tracked across runs. <!-- TODO: one line on how hallucination rate is measured. -->
+- **Tests:** run `pytest` from the repository root. <!-- TODO: add the test count or the areas covered. -->
 
 ---
 
 ## Visual Showcase
 
-### 1. Autonomous Tool Auditing & Defect Remediation
-ERIS inspects its own plugin tool sources on demand, identifies unhandled paths or dead imports (such as uncalled library functions), and generates functional, verified fixes.
+### 1. Autonomous Tool Auditing and Defect Remediation
+ERIS inspects its own plugin sources, finds unhandled paths and dead imports, and proposes verified fixes.
 
 ![Autonomous Tool Audit](assets/screenshots/01_tool_audit_and_defect_analysis.png)
 
----
-
 ### 2. Native Dynamic Media Components
-When interacting with multimedia or workspace tools, ERIS does not simply dump terminal logs. It dynamically renders native, interactive UI components directly into the conversation stream—such as an embedded media player with album art, playback controls, and seek bars.
+Tools can render native interactive components in the chat, such as an embedded media player.
 
 ![Embedded Media Player](assets/screenshots/02_embedded_media_player.png)
 
----
+### 3. Adaptive Model Routing and Live SSE Stream
+Switch providers mid-session while watching reasoning loops and tool activity stream in.
 
-### 3. Adaptive Model Routing & Real-Time SSE Stream
-Seamlessly failover or transition between live providers (such as Gemini 2.5 Flash, 3.8 Flash, or local models) while viewing the live streaming reasoning loops, web scraping activities, and tool synthesis thoughts.
+![Model Switching and Live SSE Stream](assets/screenshots/03_model_switching_and_sse_reasoning.png)
 
-![Model Switching & Live SSE Stream](assets/screenshots/03_model_switching_and_sse_reasoning.png)
+### 4. Transparent Multi-Step Reasoning and Tool Dispatch
+See reasoning duration, tool badges and intermediate thoughts as the agent works.
 
----
+![Transparent Reasoning and Tool Dispatch](assets/screenshots/04_agent_reasoning_and_interactive_workflow.png)
 
-### 4. Transparent Multi-Step Reasoning & Tool Dispatch
-Maintain complete transparency into the agent's decision-making process. Observe reasoning duration (e.g. *Thinking (24s)*), invoked tool badges (`{list_dir}`, `{search_knowledge_vault}`), and intermediate thoughts while managing files and plugins in the dual sidebars.
-
-![Transparent Reasoning & Tool Dispatch](assets/screenshots/04_agent_reasoning_and_interactive_workflow.png)
-
----
-
-### 5. Interactive Code Comparison & Slider Diff Viewer
-Review code changes before applying them with an interactive slider or side-by-side split comparison view rendered directly inside the chat interface.
+### 5. Interactive Code Diff Viewer
+Review changes in a slider or split view before approving them.
 
 ![Interactive Code Diff Viewer](assets/screenshots/05_interactive_code_diff_slider.png)
 
 ---
 
-## Download & Installation
+## Download and Installation
 
-The official installer for Windows 10 and Windows 11 (64-bit) is available on the [GitHub Releases](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta) page.
+Latest release: **[v0.1.1-beta](https://github.com/EzioAman/Eris/releases/tag/v0.1.1-beta)** (Windows 10 / 11, x64)
 
-### Windows Setup Installer (.exe)
+| Asset | Size | SHA-256 |
+|---|---|---|
+| `ERIS Setup 0.1.1-beta.exe` | 208.6 MB | `3DA0F7601177C83689A521DC632E3DF29932E70B977BECB79F115057287196DA` |
 
-| Asset | Platform | Download |
-| :--- | :--- | :--- |
-| **ERIS Setup 0.1.0-beta.exe** | Windows 10 / 11 (x64) | [**Download from GitHub Releases**](https://github.com/EzioAman/Eris/releases/tag/v0.1.0-beta) |
+1. Download the installer from the release page.
+2. Run it. It installs per user to `%LOCALAPPDATA%\Programs\ERIS` and needs no admin rights.
+3. Launch ERIS, sign in, add a model API key, and start working.
 
-#### Installation Steps:
-1. Download **`ERIS Setup 0.1.0-beta.exe`** from the release page.
-2. Run the installer:
-   - Select your preferred destination folder.
-   - Choose whether to create Desktop and Start Menu shortcuts.
-3. Launch **ERIS** from your Desktop or Start Menu.
-4. Sign in with Google or Email, add your model API keys, and start working.
-
-### Verification & Integrity
-| File | Size | SHA-256 Checksum |
-| :--- | :--- | :--- |
-| `ERIS Setup 0.1.0-beta.exe` | ~212.8 MB | `b8b70348c113c62b2fe53283d60a860b1b42d88aa8dc482014f0d98f8d0b8421` |
-
-> [!NOTE]
-> **Windows SmartScreen Notice**:
-> If Windows displays *"Windows protected your PC"* on initial launch, click **More info** and then select **Run anyway**. This is standard for newly released open-source executables that have not yet accumulated download reputation with Microsoft SmartScreen.
+> **SmartScreen:** if Windows shows "Windows protected your PC", click **More info**, then **Run anyway**. This is normal for new open-source executables.
 
 ---
 
-## Quick Start Guide
+## Quick Start
 
-### 1. Connect Your API Keys
+### 1. Connect your API keys (BYOK)
+Open **Key Vault** (`Ctrl+,`) and add keys for the providers you want. Ollama needs no key. If it is running at `http://127.0.0.1:11434`, ERIS detects your local models. Keys are encrypted and stored locally.
 
-ERIS operates on a "Bring Your Own Key" (BYOK) model. You own and control your provider credentials:
+### 2. Choose a model
+Open **Choose your model**, filter by provider or capability, and pick one. ERIS verifies connectivity before you start.
 
-1. Click **Key Vault** in the top navigation bar (or press `Ctrl+,` to open Settings).
-2. Enter your API keys for any providers you want to use:
-   - **Google Gemini**: Get free-tier keys at [Google AI Studio](https://aistudio.google.com/).
-   - **OpenRouter**: Access Claude, DeepSeek, Llama, and hundreds of open models via [openrouter.ai](https://openrouter.ai/).
-   - **Groq**: Ultra-fast inference keys from [console.groq.com](https://console.groq.com/).
-   - **Ollama**: Zero keys required. If Ollama is running at `http://127.0.0.1:11434`, ERIS auto-detects your downloaded models.
-3. Click **Save Keys**. Credentials are encrypted and stored locally on your device.
-
-### 2. Select an Active Model
-
-1. Click **Choose your model** in the top bar.
-2. Filter models by provider, capabilities (Coding, Reasoning, Free), or search by name.
-3. ERIS performs live connectivity checks against the selected provider and displays verified status badges.
-4. Pick your model and start chatting.
-
-### 3. Multi-User Account Support
-
-ERIS supports isolated profiles. When logging in with different Google accounts or guest sessions:
-- Chat threads and message histories are scoped specifically to the authenticated user.
-- User memories and persistent context are stored in dedicated directories under `memory/users/<user_id>/`.
-- Switching accounts instantly refreshes your active workspace to display only your conversations.
+### 3. Multi-user accounts
+Each signed-in account gets isolated chats and memory under `memory/users/<user_id>/`.
 
 ---
 
-## Tool & Plugin Architecture
-
-ERIS features an extensible, filesystem-first tool architecture. You do not need to modify internal engine code to add functionality.
-
-### How ERIS Discovers Tools
+## Tool and Plugin Architecture
 
 ```
 tools/
-├── open_browser.py         # Standard tool plugin
-├── play_youtube_song.py    # Custom automation tool
-└── .tool_registry.json     # Dynamic registry & integrity catalog
+├── open_browser.py
+├── play_youtube_song.py
+└── .tool_registry.json     # registry and integrity hashes
 ```
 
-1. **Filesystem Scan**: ERIS scans the `tools/` folder for `.py` files (skipping hidden and private files).
-2. **Metadata Inspection**: The engine inspects each file for:
-   - `TOOL_NAME`: Unique identifier used by the reasoning engine.
-   - `TOOL_DESCRIPTION`: Instructions informing the LLM when and how to call the tool.
-   - `execute(args)`: The standard entry point function.
-3. **Integrity Hashing**: ERIS computes a SHA-256 hash for every tool file to track version changes and verify script integrity.
-4. **Safety Leveling**: Tools performing shell execution or network requests are automatically assigned higher risk categories and routed through the human approval gate.
+1. ERIS scans `tools/` for `.py` files.
+2. Each file must define `TOOL_NAME`, `TOOL_DESCRIPTION` and `execute(args)`.
+3. A SHA-256 hash is stored per file to detect changes.
+4. Tools that run shell commands or make network requests get a higher risk level and go through the approval gate.
 
----
-
-### Creating a Custom Tool Plugin
-
-To add a new tool manually, create a Python file in the `tools/` folder (e.g., `tools/fetch_weather.py`):
+Minimal example (`tools/fetch_weather.py`):
 
 ```python
-"""
-Custom Weather Tool Plugin for ERIS.
-File path: tools/fetch_weather.py
-"""
+import json, urllib.parse, urllib.request
 
 TOOL_NAME = "fetch_weather"
-TOOL_DESCRIPTION = "Fetches the current weather report for a specified city name. Accepts argument: city_name (string)."
+TOOL_DESCRIPTION = "Fetches current weather for a city. Argument: city_name (string)."
 
 def execute(args: str = "") -> str:
-    """
-    Standard entry point invoked when the agent calls this tool.
-    
-    Args:
-        args: String argument supplied by the reasoning model.
-              For multi-argument tools, pass a JSON string or delimited format.
-              
-    Returns:
-        String result returned to the model as an observation.
-    """
-    # 1. Health-check probe convention
-    if args.strip() == "__test_ping__":
+    if args.strip() == "__test_ping__":   # health-check convention
         return "pong"
-
-    # 2. Tool logic
     city = args.strip() or "Tokyo"
     try:
-        # Example using Python standard library (or installed dependencies)
-        import urllib.request
-        import json
-        
         url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1"
-        req = urllib.request.Request(url, headers={"User-Agent": "ERIS/0.1.0"})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode())
-            current = data["current_condition"][0]
-            temp_c = current["temp_C"]
-            desc = current["weatherDesc"][0]["value"]
-            return f"Weather in {city}: {desc}, {temp_c}°C."
+        req = urllib.request.Request(url, headers={"User-Agent": "ERIS"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            cur = json.loads(r.read().decode())["current_condition"][0]
+            return f"{city}: {cur['weatherDesc'][0]['value']}, {cur['temp_C']}°C"
     except Exception as e:
         return f"Error retrieving weather for '{city}': {e}"
 ```
 
-#### Plugin Guidelines:
-- **Ping Probe**: Support the `__test_ping__` argument returning `"pong"`. ERIS uses this in the Tools UI to verify plugin responsiveness.
-- **Graceful Error Handling**: Always wrap operations in `try/except` and return descriptive error strings so the LLM can recover or retry.
-- **Live Reload**: You do not need to restart ERIS after modifying files in `tools/`. ERIS refreshes the registry automatically.
+Guidelines: support the `__test_ping__` probe, return readable error strings so the model can recover, and expect live reload (no restart).
+
+**Interactive tool synthesis:** ask "Create a tool to search Hacker News". ERIS plans and writes the tool, shows the code on an approval card, and on **Approve** compiles it (`py_compile`), registers its hash, and activates it.
 
 ---
 
-### Interactive Tool Synthesis
-
-You can also have ERIS build plugins for you directly through conversation:
-1. In chat, ask: *"Create a tool to search Hacker News stories"* or *"Build a tool to convert markdown to PDF"*.
-2. ERIS will plan the tool structure and generate the Python code.
-3. The **Interactive Approval Gate** presents the code for your inspection.
-4. Upon clicking **Approve**, ERIS compiles the file (`py_compile`), verifies syntax, writes it to `tools/`, registers the SHA-256 hash, and activates it immediately.
-
----
-
-## Architecture & Security
+## Architecture and Security
 
 ```
 ┌────────────────────────────────────────────────────────┐
 │               ERIS Desktop Frontend (React)            │
 │       Workspace  •  Model Matrix  •  Approval Cards    │
 └───────────────────────────▲────────────────────────────┘
-                            │ SSE Stream / REST API
+                            │ SSE stream / REST API
 ┌───────────────────────────▼────────────────────────────┐
-│              FastAPI & LangGraph Engine                │
-│                                                        │
-│   ┌──────────────┐   Tool Dispatch   ┌─────────────┐   │
-│   │   Reasoner   ├──────────────────►│ Tool Runner │   │
-│   │    (LLM)     │◄──────────────────┤ (Execution) │   │
-│   └──────┬───────┘    Observation    └──────┬──────┘   │
-│          │                                  │          │
-│          ▼                                  ▼          │
-│   Human Approval Gate              Dynamic tools/      │
-│   (Sensitive Action Pause)         Registry Engine     │
+│              FastAPI + LangGraph Engine                │
+│   Reasoner / Sub-agents  ->  Tool Runner  ->  Result   │
+│          │                        │                    │
+│          ▼                        ▼                    │
+│   Human Approval Gate      Dynamic tools/ registry     │
 └────────────────────────────────────────────────────────┘
 ```
 
-### Human-in-the-Loop Approval Gate
+### Human-in-the-loop approval gate
+The workflow halts at an approval node before it runs shell commands, generates or edits executable scripts, or makes destructive file changes. The card shows the exact tool, its arguments, and the safety justification. Execution continues only after you click **Approve**.
 
-ERIS incorporates strict safety boundaries around tool executions. Whenever the agent determines a need to:
-- Run a shell command or terminal process
-- Generate or modify executable script files in `tools/`
-- Perform destructive file modifications
+### Update integrity
+The self-updater reads `version.json` and verifies the SHA-256 of every download before applying it. TODO: state whether applying an update also requires user confirmation.
 
-The workflow state halts at an **approval gate node**. An interactive card appears in the chat interface detailing:
-- The exact tool being called
-- The arguments and payload
-- The safety justification
+### Thought-signature preservation
+Reasoning models (for example Gemini thinking models and DeepSeek-R1) return structured reasoning blocks and signatures. ERIS keeps them intact across multi-turn tool loops to avoid validation errors.
 
-Execution resumes only after you explicitly click **Approve**.
+---
 
-### Thought Signature Preservation
+## Benchmarks
 
-Modern reasoning models (such as Google Gemini 3.8 Flash, 2.5 Pro, and DeepSeek-R1) output intermediate reasoning tokens and opaque thought signatures. ERIS preserves these metadata structures across multi-turn tool loops to prevent model disconnects or signature validation errors.
+*Environment: Windows 11 x64, Intel Core i7, 16 GB RAM, NVMe SSD.*
+
+### Startup and footprint (v0.1.0-beta -> v0.1.1-beta)
+
+| Metric | v0.1.0 | v0.1.1 |
+|---|---|---|
+| CLI `--version` probe | 5,020 ms (timeout) | **5.2 ms** |
+| Backend cold start | 1,420 ms | **1,280 ms** |
+| Full workspace ready | 3,570 ms | **3,260 ms** |
+| Installer size | 246.2 MB | **208.6 MB** |
+| Idle memory (RSS) | 185 MB | **176 MB** |
+
+Full tables, including the Windows compatibility matrix, are in the [v0.1.1-beta release notes](https://github.com/EzioAman/Eris/releases/tag/v0.1.1-beta).
+
+### Retrieval latency
+*Measured from LangSmith traces.*
+
+| Path | Latency | Notes |
+|---|---|---|
+| Cold (no cache) | 2,400 ms | hybrid BM25 + pgvector |
+| Cache hit | 5.9 ms | semantic cache (**407x faster**) |
+| Cache hit rate | TODO % | on TODO queries |
+
+Method: TODO (number of queries, dataset size, hardware).
 
 ---
 
 ## Building from Source
 
-### Prerequisites
-
-- **OS**: Windows 10 or 11 (64-bit)
-- **Python**: 3.11 or higher
-- **Node.js**: 18.0.0 or higher
-- **Git**
-
-### Backend Setup
+**Prerequisites:** Windows 10/11 (64-bit), Python TODO_version, Node.js 18+, Git.
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/ERIS.git
-cd ERIS
+git clone https://github.com/EzioAman/Eris.git
+cd Eris
 
-# Create and activate a Python virtual environment
+# Backend
 python -m venv .venv
 .venv\Scripts\activate
-
-# Install backend dependencies
-pip install -r backend/requirements.txt
-
-# Start the FastAPI development server
+pip install -r backend/requirements.txt      # or: uv sync
 uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
-```
 
-The backend API will be accessible at `http://127.0.0.1:8000` (docs available at `/docs`).
-
-### Frontend Setup
-
-In a separate terminal:
-
-```bash
+# Frontend (separate terminal)
 cd frontend
-
-# Install npm dependencies
 npm install
-
-# Start the Vite development server
 npm run dev
 ```
 
-The frontend will run at `http://localhost:5173`.
+Backend: `http://127.0.0.1:8000` (API docs at `/docs`). Frontend: `http://localhost:5173`.
 
 ---
 
 ## Project Layout
 
+<!-- TODO: regenerate from the real tree (the old layout listed build_installer.bat and memory/, which are not in the repo root). -->
+
 ```
-ERIS/
-├── backend/
-│   ├── app/
-│   │   ├── agent/            # LangGraph workflow, nodes, router, and runner
-│   │   ├── api/              # FastAPI endpoints (chat, models, credentials, vault)
-│   │   ├── database/         # Local encrypted SQLite credentials storage
-│   │   ├── schemas/          # Strict Pydantic data schemas
-│   │   └── services/         # Memory store, tool scanner, and model verification
-│   └── requirements.txt      # Python dependencies
-├── frontend/
-│   ├── src/
-│   │   ├── components/       # ChatWorkspace, ModelConfigModal, ToolCards, Settings
-│   │   └── hooks/            # SSE event hooks and timeline listeners
-│   ├── package.json          # Node dependencies and build scripts
-│   └── electron-builder.json # Windows installer configuration
-├── tools/                    # User custom tool plugins folder
-├── memory/                   # Per-user conversational memory and habits
-├── build_installer.bat       # Official NSIS installer compiler script
-├── build_exe.bat             # Standalone executable compiler script
-└── README.md                 # Project documentation
+Eris/
+├── backend/        # FastAPI app, LangGraph agents, services, database
+├── frontend/       # React + Vite + Electron UI
+├── tools/          # Plugin tools
+├── scripts/        # Build and release scripts
+├── compose.yml     # Dockerised PostgreSQL / pgvector
+├── launcher.py     # Desktop launcher
+├── eris.spec       # PyInstaller spec
+└── version.json    # Update manifest
 ```
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please follow these guidelines:
-
-1. **Fork the repository** and create a feature branch (`git checkout -b feature/amazing-feature`).
-2. **Commit your changes** (`git commit -m 'Add amazing feature'`).
-3. **Verify builds**: Ensure backend tests pass and `npm run build` succeeds without TypeScript errors.
-4. **Push to the branch** (`git push origin feature/amazing-feature`).
-5. **Open a Pull Request**.
+1. Fork the repo and create a branch: `git checkout -b feature/my-feature`.
+2. Commit your changes.
+3. Make sure `pytest` passes and `npm run build` succeeds.
+4. Open a pull request.
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+Licensed under the Apache License 2.0. See [LICENSE](LICENSE). <!-- TODO: make this match the LICENSE file and the GitHub badge. -->
