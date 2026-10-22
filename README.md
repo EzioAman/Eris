@@ -2,12 +2,10 @@
 
 [![Release](https://img.shields.io/badge/Release-v0.1.1--beta-blue.svg)](https://github.com/EzioAman/Eris/releases/tag/v0.1.1-beta)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-TODO_confirm_version-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://microsoft.com/windows)
 
 **ERIS** is a local-first desktop AI workspace where agents don't just answer, they act. A LangGraph engine runs a reasoning loop, calls tools, and pauses for your approval before anything sensitive (terminal commands, script execution, file changes) runs on your machine.
-
-<!-- TODO: add a 20-30 second demo GIF here: give ERIS a task, show the agents working, show the approval card. -->
 
 ---
 
@@ -74,13 +72,11 @@ ERIS splits work across specialised agents coordinated by a LangGraph workflow:
 
 **How safety applies:** HITL approval gate applies when a sub-agent requests a sensitive tool.
 
-<!-- TODO: add a Mermaid or PNG diagram of the graph (supervisor -> agents -> tool runner -> approval gate). -->
+<!-- : add a Mermaid or PNG diagram of the graph (supervisor -> agents -> tool runner -> approval gate). -->
 
 ---
 
 ## Retrieval and Memory
-
-<!-- TODO: confirm each item exists in the code before keeping it. -->
 
 - **Hybrid retrieval:** (BM25) plus vector search (pgvector) over the knowledge vault.
 - **Semantic caching:** repeated or near-duplicate queries are served from cache, similarity threshold (71%).
