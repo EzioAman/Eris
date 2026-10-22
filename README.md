@@ -1,7 +1,7 @@
 # ERIS — Autonomous Desktop AI Workspace
 
 [![Release](https://img.shields.io/badge/Release-v0.1.1--beta-blue.svg)](https://github.com/EzioAman/Eris/releases/tag/v0.1.1-beta)
-[![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://microsoft.com/windows)
 
