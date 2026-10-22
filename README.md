@@ -59,20 +59,20 @@
 
 ## Multi-Agent Orchestration
 
-<!-- TODO: fill this in from your code (likely backend/app/agent/subagent_personas.py and langgraph_engine.py).
+<!-- : fill this in from your code (likely backend/app/agent/subagent_personas.py and langgraph_engine.py).
      Only describe what the code really does. Delete this section if it does not exist. -->
 
 ERIS splits work across specialised agents coordinated by a LangGraph workflow:
 
 | Agent | Role | Tools it can use |
 |---|---|---|
-| Researcher | TODO (e.g. web search, gathering sources) | TODO |
-| Coder | TODO (e.g. writes and edits code) | TODO |
-| Writer | TODO (e.g. drafts and summarises results) | TODO |
+| Researcher | In-work (e.g. web search, gathering sources) | Not 100% reliable yet |
+| Coder | In-work (e.g. writes and edits code) | Not 100% reliable yet |
+| Writer | In-work (e.g. drafts and summarises results) | Not 100% reliable yet |
 
-**How they coordinate:** TODO. State one of: shared graph state, a supervisor/router node, or message passing between agents.
+**How they coordinate:** Shared graph state, a supervisor/router node, and a message passing between agents.
 
-**How safety applies:** TODO. Explain how the approval gate applies when a sub-agent requests a sensitive tool.
+**How safety applies:** HITL approval gate applies when a sub-agent requests a sensitive tool.
 
 <!-- TODO: add a Mermaid or PNG diagram of the graph (supervisor -> agents -> tool runner -> approval gate). -->
 
@@ -82,11 +82,11 @@ ERIS splits work across specialised agents coordinated by a LangGraph workflow:
 
 <!-- TODO: confirm each item exists in the code before keeping it. -->
 
-- **Hybrid retrieval:** keyword (BM25) plus vector search (pgvector) over the knowledge vault. TODO: confirm where BM25 runs.
-- **Semantic caching:** repeated or near-duplicate queries are served from cache. TODO: describe the similarity threshold.
-- **Embeddings:** TODO (fastembed locally? Gemini embeddings?).
+- **Hybrid retrieval:** (BM25) plus vector search (pgvector) over the knowledge vault.
+- **Semantic caching:** repeated or near-duplicate queries are served from cache, similarity threshold (71%).
+- **Embeddings:** Gemini embeddings for images and videos ONLY.
 - **Per-user memory:** stored under `memory/users/<user_id>/`.
-- **Agent state checkpointing:** TODO (what is persisted, where, and how a run resumes).
+- **Agent state checkpointing:** Handled by LanGraph (state saved in artifacts during current testing process).
 
 Retrieval performance is documented in [Benchmarks](#benchmarks).
 
@@ -94,10 +94,10 @@ Retrieval performance is documented in [Benchmarks](#benchmarks).
 
 ## Observability and Testing
 
-- **Tracing with LangSmith:** every agent run, tool call and retrieval step is traced, so you can inspect the full reasoning path, latency per step and token usage. Enable it with `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in your `.env`. <!-- TODO: confirm the exact env var names/setup you used. -->
+- **Tracing with LangSmith:** every agent run, tool call and retrieval step is traced, so you can inspect the full reasoning path, latency per step and token usage. Enable it with `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in your `.env`.
 - **Measured from traces:** the retrieval latency numbers in [Benchmarks](#benchmarks) come from LangSmith traces, not estimates.
-- **Evaluation:** latency, token usage and hallucination rate are tracked across runs. <!-- TODO: one line on how hallucination rate is measured. -->
-- **Tests:** run `pytest` from the repository root. <!-- TODO: add the test count or the areas covered. -->
+- **Evaluation:** latency, token usage and hallucination rate are tracked across runs.
+- **Tests:** run `pytest` from the repository root.
 
 ---
 
@@ -222,7 +222,7 @@ Guidelines: support the `__test_ping__` probe, return readable error strings so 
 The workflow halts at an approval node before it runs shell commands, generates or edits executable scripts, or makes destructive file changes. The card shows the exact tool, its arguments, and the safety justification. Execution continues only after you click **Approve**.
 
 ### Update integrity
-The self-updater reads `version.json` and verifies the SHA-256 of every download before applying it. TODO: state whether applying an update also requires user confirmation.
+The self-updater reads `version.json` and verifies the SHA-256 of every download before applying it. Updating requires user confirmation.
 
 ### Thought-signature preservation
 Reasoning models (for example Gemini thinking models and DeepSeek-R1) return structured reasoning blocks and signatures. ERIS keeps them intact across multi-turn tool loops to avoid validation errors.
@@ -252,15 +252,12 @@ Full tables, including the Windows compatibility matrix, are in the [v0.1.1-beta
 |---|---|---|
 | Cold (no cache) | 2,400 ms | hybrid BM25 + pgvector |
 | Cache hit | 5.9 ms | semantic cache (**407x faster**) |
-| Cache hit rate | TODO % | on TODO queries |
-
-Method: TODO (number of queries, dataset size, hardware).
 
 ---
 
 ## Building from Source
 
-**Prerequisites:** Windows 10/11 (64-bit), Python TODO_version, Node.js 18+, Git.
+**Prerequisites:** Windows 10/11 (64-bit), Python, Node.js 18+, Git.
 
 ```bash
 git clone https://github.com/EzioAman/Eris.git
@@ -282,9 +279,7 @@ Backend: `http://127.0.0.1:8000` (API docs at `/docs`). Frontend: `http://localh
 
 ---
 
-## Project Layout
-
-<!-- TODO: regenerate from the real tree (the old layout listed build_installer.bat and memory/, which are not in the repo root). -->
+## Project Layout (Use your AI tools if you're recreating it yourself)
 
 ```
 Eris/
@@ -311,4 +306,4 @@ Eris/
 
 ## License
 
-Licensed under the Apache License 2.0. See [LICENSE](LICENSE). <!-- TODO: make this match the LICENSE file and the GitHub badge. -->
+Licensed under the MIT. See [LICENSE](LICENSE).
